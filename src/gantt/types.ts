@@ -40,6 +40,10 @@ export interface PositionedGanttChart {
   axisTicks: { label: string; x: number; y: number }[]
   /** Vertical grid lines at tick positions */
   gridLines: { x1: number; y1: number; x2: number; y2: number }[]
+  /** Horizontal row lines inside the timeline plot */
+  rowLines: { x1: number; y1: number; x2: number; y2: number }[]
+  /** Plot area for the actual gantt timeline */
+  plotArea: { x: number; y: number; width: number; height: number }
   sections: PositionedGanttSection[]
   /** Today marker line (optional) */
   todayLine?: { x: number; y1: number; y2: number }
@@ -58,16 +62,27 @@ export interface PositionedGanttSection {
 
 export interface PositionedGanttTask {
   name: string
+  sectionName: string
   tags: GanttTag[]
   /** Bar position */
   x: number
   y: number
   width: number
   height: number
-  /** Label position (to the right of bar, or inside) */
-  labelX: number
-  labelY: number
-  labelAnchor: 'start' | 'middle'
+  /** Full row hit-area / alignment info */
+  rowX: number
+  rowY: number
+  rowW: number
+  rowH: number
+  /** Left-column row label */
+  rowLabel: string
+  rowLabelX: number
+  rowLabelY: number
   /** Milestone renders as diamond instead of bar */
   isMilestone: boolean
+  /** Tooltip / metadata */
+  startLabel?: string
+  endLabel?: string
+  durationLabel?: string
+  tooltipLabel: string
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { parseGanttChart } from '../gantt/parser.ts'
+import { layoutGanttChart } from '../gantt/layout.ts'
 import { renderMermaidSVG } from '../index.ts'
 
 // ============================================================================
@@ -102,6 +103,44 @@ describe('gantt parser', () => {
 })
 
 // ============================================================================
+// Layout tests
+// ============================================================================
+
+describe('gantt layout', () => {
+  it('keeps task labels in a left column before the timeline bars', () => {
+    const chart = parseGanttChart([
+      'gantt',
+      'dateFormat YYYY-MM-DD',
+      'section Work',
+      'Planning : 2024-01-01, 7d',
+      'Implementation : 2024-01-08, 14d',
+    ])
+
+    const positioned = layoutGanttChart(chart)
+    const task = positioned.sections[0]!.tasks[0]!
+
+    expect(task.rowLabelX).toBeLessThan(task.x)
+    expect(positioned.plotArea.x).toBeGreaterThan(task.rowLabelX)
+    expect(positioned.rowLines.length).toBeGreaterThan(0)
+  })
+
+  it('creates calendar-aware monthly ticks for longer ranges', () => {
+    const chart = parseGanttChart([
+      'gantt',
+      'dateFormat YYYY-MM-DD',
+      'section Work',
+      'Phase 1 : 2024-01-01, 30d',
+      'Phase 2 : 2024-03-01, 30d',
+    ])
+
+    const positioned = layoutGanttChart(chart)
+    const labels = positioned.axisTicks.map(t => t.label)
+
+    expect(labels.some(label => label.includes('Jan') || label.includes('Feb') || label.includes('Mar'))).toBe(true)
+  })
+})
+
+// ============================================================================
 // Integration tests
 // ============================================================================
 
@@ -131,7 +170,6 @@ describe('gantt integration', () => {
 
     expect(svg).toContain('<svg')
     expect(svg).toContain('Release')
-    // Milestone should have a diamond path
     expect(svg).toContain('<path')
   })
 
@@ -147,6 +185,9 @@ describe('gantt integration', () => {
     expect(svg).toContain('Done task')
     expect(svg).toContain('Active task')
     expect(svg).toContain('Critical')
+    expect(svg).toContain('gantt-bar-done')
+    expect(svg).toContain('gantt-bar-active')
+    expect(svg).toContain('gantt-bar-crit')
   })
 
   it('renders multi-section gantt', () => {
@@ -163,5 +204,33 @@ describe('gantt integration', () => {
     expect(svg).toContain('Frontend')
     expect(svg).toContain('Backend')
     expect(svg).toContain('QA')
+  })
+
+  it('renders compact left-column labels and row structure', () => {
+    const svg = renderMermaidSVG(`gantt
+    title Project Alpha
+    dateFormat YYYY-MM-DD
+    section Design
+      Wireframes : 2024-01-01, 14d
+      Visual design : 2024-01-15, 10d`)
+
+    expect(svg).toContain('gantt-row-label')
+    expect(svg).toContain('gantt-row-line')
+    expect(svg).toContain('gantt-section-bg')
+    expect(svg).not.toContain('gantt-inside-label')
+  })
+
+  it('renders interactive gantt hover overlays when enabled', () => {
+    const svg = renderMermaidSVG(`gantt
+    title Project Alpha
+    dateFormat YYYY-MM-DD
+    section Design
+      Wireframes : 2024-01-01, 14d
+      Review : milestone, 2024-01-15, 0d`, { interactive: true })
+
+    expect(svg).toContain('gantt-hit-group')
+    expect(svg).toContain('gantt-tip')
+    expect(svg).toContain('Section')
+    expect(svg).toContain('Start')
   })
 })

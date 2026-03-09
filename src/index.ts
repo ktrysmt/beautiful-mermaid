@@ -173,7 +173,7 @@ export function renderMermaidSVG(
     case 'gantt': {
       const chart = parseGanttChart(lines)
       const positioned = layoutGanttChart(chart, options)
-      return renderGanttSvg(positioned, colors, font, transparent)
+      return renderGanttSvg(positioned, colors, font, transparent, options.interactive ?? false)
     }
     case 'flowchart':
     default: {

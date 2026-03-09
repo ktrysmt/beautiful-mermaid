@@ -27,16 +27,16 @@ export interface PositionedTimelineDiagram {
   height: number
   title?: { text: string; x: number; y: number }
   sections: PositionedTimelineSection[]
-  /** Connecting lines between period boxes */
-  connectors: { x1: number; y1: number; x2: number; y2: number }[]
+  /** Central horizontal timeline arrow */
+  arrow: { x1: number; y1: number; x2: number; y2: number }
 }
 
 export interface PositionedTimelineSection {
   name?: string
-  /** Section label position */
+  /** Section label position (centered in section bar) */
   labelX: number
   labelY: number
-  /** Section background rect */
+  /** Section bar rect */
   bgX: number
   bgY: number
   bgW: number
@@ -53,6 +53,10 @@ export interface PositionedTimelinePeriod {
   boxH: number
   /** Event card positions */
   events: PositionedTimelineEvent[]
+  /** Whether events are stacked above the timeline (true) or below (false) */
+  eventsAbove: boolean
+  /** Dashed vertical connector from period box to events */
+  drop?: { x: number; y1: number; y2: number }
 }
 
 export interface PositionedTimelineEvent {

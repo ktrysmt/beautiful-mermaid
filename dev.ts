@@ -68,9 +68,20 @@ async function rebuild(): Promise<void> {
 // ============================================================================
 
 let debounce: Timer | null = null
+
+function shouldIgnore(filename: string | null): boolean {
+  if (!filename) return false
+  if (filename === 'index.html' || filename.endsWith('/index.html')) return true
+  if (filename === 'chart-index.html' || filename.endsWith('/chart-index.html')) return true
+  if (filename === 'compare.html' || filename.endsWith('/compare.html')) return true
+  if (filename === '.cache' || filename.startsWith('.cache/') || filename.includes('/.cache/')) return true
+  if (filename.includes('.git/')) return true
+  if (filename.includes('node_modules/')) return true
+  return false
+}
+
 function onFileChange(_event: string, filename: string | null): void {
-  // Ignore index.html itself (it's the output, not a source)
-  if (filename === 'index.html' || filename === 'chart-index.html') return
+  if (shouldIgnore(filename)) return
   if (debounce) clearTimeout(debounce)
   debounce = setTimeout(() => {
     console.log(`\x1b[90m[dev]\x1b[0m Change detected${filename ? `: ${filename}` : ''}`)
