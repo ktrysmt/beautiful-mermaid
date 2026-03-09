@@ -132,12 +132,16 @@ interface HierarchicalEdgeInfo {
 /**
  * Convert a MermaidGraph to ELK's nested JSON input format.
  *
- * Uses SEPARATE hierarchy handling for proper subgraph direction override support.
- * Cross-hierarchy edges use hierarchical ports to connect external and internal sections.
+ * Supports both SEPARATE and INCLUDE_CHILDREN hierarchy handling modes.
+ * In SEPARATE mode, cross-hierarchy edges use hierarchical ports to connect
+ * external and internal sections while preserving subgraph direction overrides.
  */
+type HierarchyHandlingMode = 'SEPARATE' | 'INCLUDE_CHILDREN'
+
 function mermaidToElk(
   graph: MermaidGraph,
-  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>>
+  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>>,
+  buildOptions: { hierarchyHandling?: HierarchyHandlingMode } = {}
 ): ElkGraphNode {
   // Collect all node IDs that belong to subgraphs
   const subgraphNodeIds = new Set<string>()
@@ -167,6 +171,11 @@ function mermaidToElk(
 
   for (let i = 0; i < graph.edges.length; i++) {
     const edge = graph.edges[i]!
+
+    // Skip self-loops — they are handled after layout by generateSelfLoopEdges()
+    // instead of being routed by ELK (which creates ugly wide orthogonal paths)
+    if (edge.source === edge.target) continue
+
     const sourceSubgraph = nodeToSubgraph.get(edge.source)
     const targetSubgraph = nodeToSubgraph.get(edge.target)
 
@@ -185,9 +194,13 @@ function mermaidToElk(
     }
   }
 
-  // Determine if we need SEPARATE hierarchy handling
-  // We use SEPARATE when any subgraph has a direction override
+  // Determine hierarchy handling mode.
+  // Default behavior: use SEPARATE when any subgraph has a direction override.
+  // Fallback behavior can force INCLUDE_CHILDREN to avoid ELK NaN edge cases.
   const hasDirectionOverride = graph.subgraphs.some(sg => sg.direction !== undefined)
+  const hierarchyHandling: HierarchyHandlingMode = buildOptions.hierarchyHandling
+    ?? (hasDirectionOverride ? 'SEPARATE' : 'INCLUDE_CHILDREN')
+  const useSeparateHierarchy = hierarchyHandling === 'SEPARATE'
 
   // Build the root ELK graph
   const elkGraph: ElkGraphNode = {
@@ -210,9 +223,18 @@ function mermaidToElk(
       'elk.layered.compaction.postCompaction.strategy': 'LEFT_RIGHT_CONSTRAINT_LOCKING',
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       'elk.layered.wrapping.strategy': 'OFF',
-      // Use SEPARATE when subgraphs have direction overrides (enables proper direction handling)
-      // Use INCLUDE_CHILDREN otherwise (simpler cross-hierarchy edge routing)
-      'elk.hierarchyHandling': hasDirectionOverride ? 'SEPARATE' : 'INCLUDE_CHILDREN',
+      // Use explicit hierarchy handling (default or fallback override).
+      'elk.hierarchyHandling': hierarchyHandling,
+      // ELK-native hierarchical crossing improvements.
+      // Only set these for SEPARATE mode — in INCLUDE_CHILDREN, some ELK
+      // versions can throw internal errors for hierarchical greedy-switch.
+      ...(useSeparateHierarchy
+        ? {
+            'elk.layered.crossingMinimization.greedySwitchHierarchical.type': 'TWO_SIDED',
+            'elk.layered.crossingMinimization.hierarchicalSweepiness': '0.2',
+            'elk.layered.mergeHierarchyEdges': 'true',
+          }
+        : {}),
     },
     children: [],
     edges: [],
@@ -227,7 +249,7 @@ function mermaidToElk(
   }>>()
 
   // Process cross-hierarchy edges to create port entries
-  if (hasDirectionOverride) {
+  if (useSeparateHierarchy) {
     for (const { index, edge, sourceSubgraph, targetSubgraph } of crossHierarchyEdges) {
       // Handle outgoing edges from subgraph
       if (sourceSubgraph) {
@@ -303,8 +325,8 @@ function mermaidToElk(
   for (const { index, edge, sourceSubgraph, targetSubgraph } of crossHierarchyEdges) {
     const elkEdge: ElkExtendedEdge = {
       id: `e${index}`,
-      sources: hasDirectionOverride && sourceSubgraph ? [`${sourceSubgraph}_out_${index}`] : [edge.source],
-      targets: hasDirectionOverride && targetSubgraph ? [`${targetSubgraph}_in_${index}`] : [edge.target],
+      sources: useSeparateHierarchy && sourceSubgraph ? [`${sourceSubgraph}_out_${index}`] : [edge.source],
+      targets: useSeparateHierarchy && targetSubgraph ? [`${targetSubgraph}_in_${index}`] : [edge.target],
     }
     if (edge.label) {
       const metrics = measureMultilineText(edge.label, FONT_SIZES.edgeLabel, FONT_WEIGHTS.edgeLabel)
@@ -528,11 +550,22 @@ function elkToPositioned(
   // so we need to collect them from all children with proper offsets
   extractEdgesRecursively(elkResult, graph, edges, 0, 0, margins)
 
+  // Generate self-loop edges with compact paths.
+  // Self-loops are excluded from ELK routing (which creates ugly wide orthogonal paths)
+  // and instead get tight custom paths positioned close to the node.
+  const nodeMap0 = new Map(nodes.map(n => [n.id, n]))
+  generateSelfLoopEdges(graph, edges, nodeMap0, graph.direction)
+
   // Snap same-layer nodes to the same position along the flow axis.
   // ELK's orthogonal routing staggers nodes within a layer to create room for
   // edge bends, but this looks bad. We fix it by aligning layers, then let
   // edge bundling and clipping recalculate edge paths from corrected positions.
   alignLayerNodes(nodes, edges, graph.direction)
+
+  // NOTE: Top-level group centering is currently disabled.
+  // In dense cross-subgraph meshes it can distort ELK-routed paths because
+  // edges are only endpoint-adjusted post-layout, which increases overlaps.
+  // centerTopLevelGroups(nodes, edges, groups, graph, graph.direction)
 
   // Bundle fan-out/fan-in edge paths into shared trunks when mergeEdges is enabled
   if (mergeEdges) {
@@ -555,27 +588,63 @@ function elkToPositioned(
     }
   }
 
-  // Calculate final bounds including all edge points
-  // ELK should include edges in its dimensions, but we verify and expand if needed
-  let width = elkResult.width ?? 800
-  let height = elkResult.height ?? 600
+  // Calculate final bounds including all edge points and labels.
+  // Track min/max extents — self-loop labels can extend past the left/top edges.
   const arrowMargin = ARROW_HEAD.width
   const padding = DEFAULTS.padding
+  let minX = 0
+  let minY = 0
+  let maxX = elkResult.width ?? 800
+  let maxY = elkResult.height ?? 600
 
   for (const edge of edges) {
     for (const p of edge.points) {
-      width = Math.max(width, p.x + arrowMargin + padding)
-      height = Math.max(height, p.y + arrowMargin + padding)
+      minX = Math.min(minX, p.x - arrowMargin)
+      minY = Math.min(minY, p.y - arrowMargin)
+      maxX = Math.max(maxX, p.x + arrowMargin + padding)
+      maxY = Math.max(maxY, p.y + arrowMargin + padding)
     }
-    if (edge.labelPosition) {
-      width = Math.max(width, edge.labelPosition.x + 60 + padding)
-      height = Math.max(height, edge.labelPosition.y + 20 + padding)
+    if (edge.labelPosition && edge.label) {
+      // Measure actual label width — labels are centered at labelPosition
+      const metrics = measureMultilineText(edge.label, FONT_SIZES.edgeLabel, FONT_WEIGHTS.edgeLabel)
+      const halfW = (metrics.width + 16) / 2  // +16 for label background padding
+      const halfH = (metrics.height + 12) / 2
+      minX = Math.min(minX, edge.labelPosition.x - halfW)
+      minY = Math.min(minY, edge.labelPosition.y - halfH)
+      maxX = Math.max(maxX, edge.labelPosition.x + halfW + padding)
+      maxY = Math.max(maxY, edge.labelPosition.y + halfH + padding)
     }
   }
 
+  // If content extends past the left/top edges, shift everything right/down
+  if (minX < 0 || minY < 0) {
+    const shiftX = minX < 0 ? -minX + padding : 0
+    const shiftY = minY < 0 ? -minY + padding : 0
+
+    for (const node of nodes) {
+      node.x += shiftX
+      node.y += shiftY
+    }
+    for (const edge of edges) {
+      for (const p of edge.points) {
+        p.x += shiftX
+        p.y += shiftY
+      }
+      if (edge.labelPosition) {
+        edge.labelPosition.x += shiftX
+        edge.labelPosition.y += shiftY
+      }
+    }
+    for (const group of groups) {
+      shiftGroup(group, shiftX, shiftY)
+    }
+    maxX += shiftX
+    maxY += shiftY
+  }
+
   return {
-    width,
-    height,
+    width: maxX,
+    height: maxY,
     nodes,
     edges,
     groups,
@@ -938,6 +1007,15 @@ function collectEdgeSegments(
   }
 }
 
+/** Recursively shift a group and its children by (dx, dy) */
+function shiftGroup(group: PositionedGroup, dx: number, dy: number): void {
+  group.x += dx
+  group.y += dy
+  for (const child of group.children) {
+    shiftGroup(child, dx, dy)
+  }
+}
+
 /** Find a subgraph by ID in a nested structure */
 function findSubgraph(subgraphs: MermaidSubgraph[], id: string): MermaidSubgraph | undefined {
   for (const sg of subgraphs) {
@@ -1005,6 +1083,169 @@ function resolveEdgeStyle(
   }
 
   return result
+}
+
+// ============================================================================
+// Self-loop generation — compact custom paths instead of ELK routing
+// ============================================================================
+
+/** Side of a node where a self-loop is placed */
+type LoopSide = 'top' | 'right' | 'bottom' | 'left'
+
+/**
+ * Choose which sides of the node to place self-loops on.
+ *
+ * For TD/TB: prefer right first, then left (avoids colliding with flow edges)
+ * For LR/RL: prefer bottom first, then top
+ * For multiple loops, alternate between the two preferred sides.
+ */
+function assignLoopSides(count: number, direction: Direction): LoopSide[] {
+  const isHorizontal = direction === 'LR' || direction === 'RL'
+  const primary: LoopSide = isHorizontal ? 'bottom' : 'right'
+  const secondary: LoopSide = isHorizontal ? 'top' : 'left'
+
+  const sides: LoopSide[] = []
+  for (let i = 0; i < count; i++) {
+    sides.push(i % 2 === 0 ? primary : secondary)
+  }
+  return sides
+}
+
+/**
+ * Generate compact self-loop edge paths after ELK layout.
+ *
+ * Self-loops are excluded from ELK routing because ELK creates wide orthogonal
+ * paths that extend far from the node. Instead, this function creates tight
+ * rectangular loops positioned close to the node boundary.
+ *
+ * Each loop is a 4-segment orthogonal path:
+ *   exit → corner1 → corner2 → entry
+ *
+ * Multiple self-loops on the same node are distributed across different sides
+ * and stacked with spacing offsets to prevent overlap.
+ */
+function generateSelfLoopEdges(
+  graph: MermaidGraph,
+  edges: PositionedEdge[],
+  nodeMap: Map<string, PositionedNode>,
+  direction: Direction
+): void {
+  // Collect self-loop edges from the original graph, grouped by node
+  const selfLoopsByNode = new Map<string, Array<{ index: number; edge: MermaidEdge }>>()
+  for (let i = 0; i < graph.edges.length; i++) {
+    const edge = graph.edges[i]!
+    if (edge.source === edge.target) {
+      if (!selfLoopsByNode.has(edge.source)) {
+        selfLoopsByNode.set(edge.source, [])
+      }
+      selfLoopsByNode.get(edge.source)!.push({ index: i, edge })
+    }
+  }
+
+  const LOOP_OFFSET = 20  // how far the loop extends from the node
+  const LOOP_SPACING = 16 // spacing between stacked loops on the same side
+  const LOOP_GAP = 16     // gap between exit/entry points on the node edge
+
+  for (const [nodeId, selfLoops] of selfLoopsByNode) {
+    const node = nodeMap.get(nodeId)
+    if (!node) continue
+
+    const cx = node.x + node.width / 2
+    const cy = node.y + node.height / 2
+    const sides = assignLoopSides(selfLoops.length, direction)
+
+    // Count loops per side for stacking offset
+    const sideCount = new Map<LoopSide, number>()
+
+    for (let i = 0; i < selfLoops.length; i++) {
+      const { edge } = selfLoops[i]!
+      const side = sides[i]!
+      const stackIdx = sideCount.get(side) ?? 0
+      sideCount.set(side, stackIdx + 1)
+
+      const offset = LOOP_OFFSET + stackIdx * LOOP_SPACING
+      let points: Point[]
+      let labelPosition: Point
+
+      // Measure label so we can offset the label center past the loop
+      // (labels are center-aligned, so without offset they overlap the node)
+      const LABEL_PAD = 12
+      let labelHalfW = 0
+      let labelHalfH = 0
+      if (edge.label) {
+        const m = measureMultilineText(edge.label, FONT_SIZES.edgeLabel, FONT_WEIGHTS.edgeLabel)
+        labelHalfW = (m.width + LABEL_PAD) / 2
+        labelHalfH = (m.height + LABEL_PAD) / 2
+      }
+
+      switch (side) {
+        case 'right': {
+          const exitY = cy - LOOP_GAP / 2
+          const entryY = cy + LOOP_GAP / 2
+          const loopX = node.x + node.width + offset
+          points = [
+            { x: node.x + node.width, y: exitY },
+            { x: loopX, y: exitY },
+            { x: loopX, y: entryY },
+            { x: node.x + node.width, y: entryY },
+          ]
+          labelPosition = { x: loopX + labelHalfW + 4, y: cy }
+          break
+        }
+        case 'left': {
+          const exitY = cy - LOOP_GAP / 2
+          const entryY = cy + LOOP_GAP / 2
+          const loopX = node.x - offset
+          points = [
+            { x: node.x, y: exitY },
+            { x: loopX, y: exitY },
+            { x: loopX, y: entryY },
+            { x: node.x, y: entryY },
+          ]
+          labelPosition = { x: loopX - labelHalfW - 4, y: cy }
+          break
+        }
+        case 'bottom': {
+          const exitX = cx - LOOP_GAP / 2
+          const entryX = cx + LOOP_GAP / 2
+          const loopY = node.y + node.height + offset
+          points = [
+            { x: exitX, y: node.y + node.height },
+            { x: exitX, y: loopY },
+            { x: entryX, y: loopY },
+            { x: entryX, y: node.y + node.height },
+          ]
+          labelPosition = { x: cx, y: loopY + labelHalfH + 4 }
+          break
+        }
+        case 'top': {
+          const exitX = cx - LOOP_GAP / 2
+          const entryX = cx + LOOP_GAP / 2
+          const loopY = node.y - offset
+          points = [
+            { x: exitX, y: node.y },
+            { x: exitX, y: loopY },
+            { x: entryX, y: loopY },
+            { x: entryX, y: node.y },
+          ]
+          labelPosition = { x: cx, y: loopY - labelHalfH - 4 }
+          break
+        }
+      }
+
+      edges.push({
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        style: edge.style,
+        hasArrowStart: edge.hasArrowStart,
+        hasArrowEnd: edge.hasArrowEnd,
+        points,
+        labelPosition: edge.label ? labelPosition : undefined,
+        inlineStyle: resolveEdgeStyle(selfLoops[i]!.index, graph),
+      })
+    }
+  }
 }
 
 // ============================================================================
@@ -1149,6 +1390,192 @@ function alignLayerNodes(
         if (edge.points.length > 1) {
           const prev = edge.points[edge.points.length - 2]!
           if (prev.y === last.y - tgtDelta) prev.y += tgtDelta
+        }
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Top-level group centering
+// ============================================================================
+
+/**
+ * Recursively collect all node IDs belonging to a subgraph (including nested children).
+ */
+function collectAllNodeIdsInSubgraph(sg: MermaidSubgraph): Set<string> {
+  const result = new Set<string>()
+  for (const id of sg.nodeIds) result.add(id)
+  for (const child of sg.children) {
+    for (const id of collectAllNodeIdsInSubgraph(child)) result.add(id)
+  }
+  return result
+}
+
+/**
+ * Center narrower top-level groups within the total content width.
+ *
+ * In a TD/TB layout, when a narrow subgraph sits above a wide one, ELK
+ * positions it flush-left rather than centered. This post-processing step
+ * groups top-level subgraphs into "layers" along the perpendicular axis
+ * (X for TD/TB, Y for LR/RL), then centers each layer within the total
+ * content span.
+ *
+ * Groups that are side-by-side (same layer) are shifted together so they
+ * don't overlap. Only layers that are narrower than the widest layer get
+ * centered.
+ *
+ * Runs BEFORE bundleEdgePaths so that bundled edges pick up corrected
+ * node positions. Cross-group edge endpoints are adjusted using the same
+ * pattern as alignLayerNodes.
+ */
+function centerTopLevelGroups(
+  nodes: PositionedNode[],
+  edges: PositionedEdge[],
+  groups: PositionedGroup[],
+  graph: MermaidGraph,
+  direction: Direction
+): void {
+  if (groups.length <= 1) return
+
+  const isHorizontal = direction === 'LR' || direction === 'RL'
+
+  // Build node-ID sets for each top-level group
+  const groupNodeSets = new Map<string, Set<string>>()
+  for (const group of groups) {
+    const sg = findSubgraph(graph.subgraphs, group.id)
+    if (sg) {
+      groupNodeSets.set(group.id, collectAllNodeIdsInSubgraph(sg))
+    }
+  }
+
+  // Group subgraphs into layers along the flow axis.
+  // For TD/TB: groups at similar Y positions are in the same layer (side-by-side).
+  // For LR/RL: groups at similar X positions are in the same layer.
+  // Only groups in DIFFERENT layers should be centered relative to each other.
+  const sorted = [...groups].sort((a, b) =>
+    isHorizontal ? a.x - b.x : a.y - b.y
+  )
+
+  const LAYER_THRESHOLD = DEFAULTS.layerSpacing * 0.6
+  const layers: PositionedGroup[][] = [[sorted[0]!]]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const pos = isHorizontal ? sorted[i]!.x : sorted[i]!.y
+    const prevPos = isHorizontal ? sorted[i - 1]!.x : sorted[i - 1]!.y
+    if (pos - prevPos <= LAYER_THRESHOLD) {
+      layers[layers.length - 1]!.push(sorted[i]!)
+    } else {
+      layers.push([sorted[i]!])
+    }
+  }
+
+  // Nothing to center if all groups are in the same layer
+  if (layers.length <= 1) return
+
+  // Compute the perpendicular content span across all groups.
+  // For TD/TB: horizontal span (X). For LR/RL: vertical span (Y).
+  let contentMin = Infinity
+  let contentMax = -Infinity
+
+  for (const g of groups) {
+    if (isHorizontal) {
+      contentMin = Math.min(contentMin, g.y)
+      contentMax = Math.max(contentMax, g.y + g.height)
+    } else {
+      contentMin = Math.min(contentMin, g.x)
+      contentMax = Math.max(contentMax, g.x + g.width)
+    }
+  }
+
+  if (!isFinite(contentMin) || !isFinite(contentMax)) return
+
+  const contentCenter = (contentMin + contentMax) / 2
+
+  // Center each layer within the content span
+  for (const layer of layers) {
+    // Compute the layer's perpendicular span
+    let layerMin = Infinity
+    let layerMax = -Infinity
+    for (const g of layer) {
+      if (isHorizontal) {
+        layerMin = Math.min(layerMin, g.y)
+        layerMax = Math.max(layerMax, g.y + g.height)
+      } else {
+        layerMin = Math.min(layerMin, g.x)
+        layerMax = Math.max(layerMax, g.x + g.width)
+      }
+    }
+
+    const layerCenter = (layerMin + layerMax) / 2
+    const delta = contentCenter - layerCenter
+
+    if (Math.abs(delta) < 2) continue
+
+    const deltaX = isHorizontal ? 0 : delta
+    const deltaY = isHorizontal ? delta : 0
+
+    // Shift all groups in this layer
+    for (const group of layer) {
+      const nodeIds = groupNodeSets.get(group.id)
+      if (!nodeIds) continue
+
+      // Shift group bounding box (including nested children)
+      shiftGroup(group, deltaX, deltaY)
+
+      // Shift all nodes belonging to this group
+      for (const node of nodes) {
+        if (nodeIds.has(node.id)) {
+          node.x += deltaX
+          node.y += deltaY
+        }
+      }
+
+      // Adjust edges
+      for (const edge of edges) {
+        const sourceIn = nodeIds.has(edge.source)
+        const targetIn = nodeIds.has(edge.target)
+
+        if (sourceIn && targetIn) {
+          // Internal edge: shift all points
+          for (const p of edge.points) {
+            p.x += deltaX
+            p.y += deltaY
+          }
+          if (edge.labelPosition) {
+            edge.labelPosition.x += deltaX
+            edge.labelPosition.y += deltaY
+          }
+        } else if (sourceIn) {
+          // Cross-group edge: source shifted — adjust start endpoint + adjacent bend
+          const first = edge.points[0]!
+          if (isHorizontal) {
+            first.y += deltaY
+            if (edge.points.length > 1 && edge.points[1]!.y === first.y - deltaY) {
+              edge.points[1]!.y += deltaY
+            }
+          } else {
+            first.x += deltaX
+            if (edge.points.length > 1 && edge.points[1]!.x === first.x - deltaX) {
+              edge.points[1]!.x += deltaX
+            }
+          }
+        } else if (targetIn) {
+          // Cross-group edge: target shifted — adjust end endpoint + adjacent bend
+          const last = edge.points[edge.points.length - 1]!
+          if (isHorizontal) {
+            last.y += deltaY
+            if (edge.points.length > 1) {
+              const prev = edge.points[edge.points.length - 2]!
+              if (prev.y === last.y - deltaY) prev.y += deltaY
+            }
+          } else {
+            last.x += deltaX
+            if (edge.points.length > 1) {
+              const prev = edge.points[edge.points.length - 2]!
+              if (prev.x === last.x - deltaX) prev.x += deltaX
+            }
+          }
         }
       }
     }
@@ -1396,6 +1823,104 @@ function bundleEdgePaths(
 // ============================================================================
 
 /**
+ * Recursively checks whether an object graph contains non-finite numbers.
+ * Used to catch ELK instability that can otherwise leak NaN into SVG coordinates.
+ */
+function hasNonFiniteNumbers(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
+  if (typeof value === 'number') return !Number.isFinite(value)
+  if (value == null) return false
+
+  if (Array.isArray(value)) {
+    return value.some(v => hasNonFiniteNumbers(v, seen))
+  }
+
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (seen.has(obj)) return false
+    seen.add(obj)
+
+    for (const v of Object.values(obj)) {
+      if (hasNonFiniteNumbers(v, seen)) return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Choose primary hierarchy handling mode for ELK.
+ *
+ * For simple direction-override diagrams, SEPARATE usually preserves subgraph
+ * intent well. For dense cross-hierarchy meshes, INCLUDE_CHILDREN often yields
+ * better global crossing optimization because ELK sees more of the graph in one run.
+ */
+function choosePrimaryHierarchyHandling(graph: MermaidGraph): HierarchyHandlingMode {
+  const hasDirectionOverride = graph.subgraphs.some(sg => sg.direction !== undefined)
+  if (!hasDirectionOverride) return 'INCLUDE_CHILDREN'
+
+  const nodeToSubgraph = buildNodeToSubgraphMap(graph.subgraphs)
+  let nonSelfEdges = 0
+  let crossHierarchyEdges = 0
+
+  for (const edge of graph.edges) {
+    if (edge.source === edge.target) continue
+    nonSelfEdges += 1
+
+    const sourceSubgraph = nodeToSubgraph.get(edge.source)
+    const targetSubgraph = nodeToSubgraph.get(edge.target)
+    const isCrossHierarchy =
+      sourceSubgraph !== targetSubgraph && !(sourceSubgraph === undefined && targetSubgraph === undefined)
+
+    if (isCrossHierarchy) crossHierarchyEdges += 1
+  }
+
+  const ratio = nonSelfEdges > 0 ? crossHierarchyEdges / nonSelfEdges : 0
+  const isDenseCrossHierarchy = crossHierarchyEdges >= 8 && ratio >= 0.3
+
+  return isDenseCrossHierarchy ? 'INCLUDE_CHILDREN' : 'SEPARATE'
+}
+
+/**
+ * Run ELK layout with a defensive fallback for known NaN edge cases.
+ *
+ * Primary mode is chosen by graph structure (see choosePrimaryHierarchyHandling).
+ * If ELK returns non-finite coordinates, retry with the opposite mode.
+ */
+function runElkWithFallback(
+  graph: MermaidGraph,
+  opts: Required<Pick<RenderOptions, 'font' | 'padding' | 'nodeSpacing' | 'layerSpacing'>>
+): ElkNode {
+  const primaryMode = choosePrimaryHierarchyHandling(graph)
+  const fallbackMode: HierarchyHandlingMode = primaryMode === 'SEPARATE' ? 'INCLUDE_CHILDREN' : 'SEPARATE'
+
+  let primaryError: unknown
+  try {
+    const primary = mermaidToElk(graph, opts, { hierarchyHandling: primaryMode })
+    const primaryResult = elkLayoutSync(primary)
+    if (!hasNonFiniteNumbers(primaryResult)) return primaryResult
+    primaryError = new Error('Primary ELK result had non-finite coordinates')
+  } catch (error) {
+    primaryError = error
+  }
+
+  let fallbackError: unknown
+  try {
+    const fallback = mermaidToElk(graph, opts, { hierarchyHandling: fallbackMode })
+    const fallbackResult = elkLayoutSync(fallback)
+    if (!hasNonFiniteNumbers(fallbackResult)) return fallbackResult
+    fallbackError = new Error('Fallback ELK result had non-finite coordinates')
+  } catch (error) {
+    fallbackError = error
+  }
+
+  const primaryMsg = primaryError instanceof Error ? primaryError.message : String(primaryError)
+  const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+  throw new Error(
+    `ELK failed in both hierarchy modes (${primaryMode} and ${fallbackMode}). Primary: ${primaryMsg}. Fallback: ${fallbackMsg}`,
+  )
+}
+
+/**
  * Lay out a parsed MermaidGraph using ELK.js (synchronous).
  * Returns a fully positioned graph ready for rendering.
  */
@@ -1404,9 +1929,14 @@ export function layoutGraphSync(
   options: RenderOptions = {}
 ): PositionedGraph {
   const opts = { ...DEFAULTS, ...options }
-  const elkGraph = mermaidToElk(graph, opts)
-  const result = elkLayoutSync(elkGraph)
-  return elkToPositioned(result, graph, DEFAULTS.mergeEdges)
+  const result = runElkWithFallback(graph, opts)
+  const positioned = elkToPositioned(result, graph, DEFAULTS.mergeEdges)
+
+  if (hasNonFiniteNumbers(positioned)) {
+    throw new Error('Layout pipeline produced non-finite positioned coordinates')
+  }
+
+  return positioned
 }
 
 /**

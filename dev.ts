@@ -38,6 +38,14 @@ async function rebuild(): Promise<void> {
   })
   await proc.exited
 
+  // Also build the chart gallery
+  const chartProc = Bun.spawn(['bun', 'run', join(ROOT, 'chart-index.ts')], {
+    cwd: ROOT,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  await chartProc.exited
+
   const ms = (performance.now() - t0).toFixed(0)
   if (proc.exitCode === 0) {
     console.log(`\x1b[32m[dev]\x1b[0m Rebuilt in ${ms}ms`)
@@ -62,7 +70,7 @@ async function rebuild(): Promise<void> {
 let debounce: Timer | null = null
 function onFileChange(_event: string, filename: string | null): void {
   // Ignore index.html itself (it's the output, not a source)
-  if (filename === 'index.html') return
+  if (filename === 'index.html' || filename === 'chart-index.html') return
   if (debounce) clearTimeout(debounce)
   debounce = setTimeout(() => {
     console.log(`\x1b[90m[dev]\x1b[0m Change detected${filename ? `: ${filename}` : ''}`)
@@ -107,6 +115,30 @@ Bun.serve({
           Connection: 'keep-alive',
         },
       })
+    }
+
+    // Serve chart gallery at /new-tests
+    if (url.pathname === '/new-tests') {
+      const chartFile = Bun.file(join(ROOT, 'chart-index.html'))
+      if (!(await chartFile.exists())) {
+        return new Response('chart-index.html not found — build may have failed', { status: 404 })
+      }
+      let chartHtml = await chartFile.text()
+      chartHtml = chartHtml.replace(
+        '</body>',
+        `  <script>
+    ;(function() {
+      function connect() {
+        var es = new EventSource('/__dev_events');
+        es.onmessage = function(e) { if (e.data === 'reload') location.reload(); };
+        es.onerror = function() { es.close(); setTimeout(connect, 500); };
+      }
+      connect();
+    })();
+  </script>
+</body>`,
+      )
+      return new Response(chartHtml, { headers: { 'Content-Type': 'text/html' } })
     }
 
     // Serve index.html with injected live-reload script

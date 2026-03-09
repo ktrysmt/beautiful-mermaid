@@ -8,7 +8,8 @@
  * and Batch 3 (state diagrams).
  */
 import { describe, it, expect } from 'bun:test'
-import { renderMermaidSVG } from '../index.ts'
+import { renderMermaidSVG, parseMermaid } from '../index.ts'
+import { layoutGraphSync } from '../layout.ts'
 
 // ============================================================================
 // Basic rendering
@@ -409,6 +410,54 @@ describe('renderMermaidSVG – edge cases', () => {
     expect(svg).toContain('>again</text>')
   })
 
+  it('renders multiple self-loops on the same node', () => {
+    const svg = renderMermaidSVG(`graph TD
+      A[State] -->|first| A
+      A -->|second| A`)
+
+    expect(svg).toContain('>State</text>')
+    expect(svg).toContain('>first</text>')
+    expect(svg).toContain('>second</text>')
+    // Both edges should render as polylines
+    const polylines = svg.match(/<polyline/g) ?? []
+    expect(polylines.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renders state diagram with multiple self-loops', () => {
+    const svg = renderMermaidSVG(`stateDiagram-v2
+      [*] --> Active
+      Active --> Active: retry
+      Active --> Active: refresh
+      Active --> Done: complete`)
+
+    expect(svg).toContain('>retry</text>')
+    expect(svg).toContain('>refresh</text>')
+    expect(svg).toContain('>complete</text>')
+  })
+
+  it('positions multiple self-loop labels apart (no overlap)', () => {
+    const graph = parseMermaid(`graph TD
+      A[State] -->|first| A
+      A -->|second| A`)
+    const positioned = layoutGraphSync(graph)
+
+    // Find the two self-loop edges
+    const selfLoops = positioned.edges.filter(e => e.source === e.target && e.label)
+    expect(selfLoops.length).toBe(2)
+
+    // Both should have label positions
+    const pos0 = selfLoops[0]!.labelPosition
+    const pos1 = selfLoops[1]!.labelPosition
+    expect(pos0).toBeDefined()
+    expect(pos1).toBeDefined()
+
+    // Label centers should not be at the same position (minimum separation)
+    const dx = Math.abs(pos0!.x - pos1!.x)
+    const dy = Math.abs(pos0!.y - pos1!.y)
+    const distance = Math.sqrt(dx * dx + dy * dy)
+    expect(distance).toBeGreaterThan(10)
+  })
+
   it('renders an empty subgraph without crashing', () => {
     const svg = renderMermaidSVG(`graph TD
       subgraph Empty
@@ -485,6 +534,7 @@ describe('renderMermaidSVG – edge cases', () => {
     expect(svg).toContain('>verify</text>')
   })
 })
+
 
 // ============================================================================
 // All new shapes in one diagram (end-to-end stress test)

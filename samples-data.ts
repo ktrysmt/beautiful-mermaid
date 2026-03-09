@@ -398,6 +398,20 @@ export const samples: Sample[] = [
   },
 
   {
+    title: 'State: Self-Loops',
+    category: 'State',
+    description: 'Multiple self-transitions on the same state, distributed around the node.',
+    source: `stateDiagram-v2
+  [*] --> SessionWorkspace
+  SessionWorkspace --> SessionWorkspace: Open/close session panels
+  SessionWorkspace --> BrowserVisible: Open browser
+  BrowserVisible --> BrowserVisible: Navigate / switch browser instance
+  BrowserVisible --> SessionWorkspace: Hide browser lane
+  BrowserVisible --> BrowserVisible: Open new session panel
+  SessionWorkspace --> SessionWorkspace: Open browser in background tab`,
+  },
+
+  {
     title: 'State: CJK State Names',
     category: 'State',
     description: 'State diagram using Chinese characters for state names.',

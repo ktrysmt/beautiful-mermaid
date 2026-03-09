@@ -10,6 +10,10 @@
 //   - Sequence diagrams (sequenceDiagram)
 //   - Class diagrams (classDiagram)
 //   - ER diagrams (erDiagram)
+//   - XY Charts (xychart-beta)
+//   - Quadrant Charts (quadrantChart)
+//   - Timelines (timeline)
+//   - Gantt Charts (gantt)
 //
 // Theming uses CSS custom properties (--bg, --fg, + optional enrichment).
 // See src/theme.ts for the full variable system.
@@ -46,18 +50,30 @@ import { renderErSvg } from './er/renderer.ts'
 import { parseXYChart } from './xychart/parser.ts'
 import { layoutXYChart } from './xychart/layout.ts'
 import { renderXYChartSvg } from './xychart/renderer.ts'
+import { parseQuadrantChart } from './quadrant/parser.ts'
+import { layoutQuadrantChart } from './quadrant/layout.ts'
+import { renderQuadrantSvg } from './quadrant/renderer.ts'
+import { parseTimeline } from './timeline/parser.ts'
+import { layoutTimeline } from './timeline/layout.ts'
+import { renderTimelineSvg } from './timeline/renderer.ts'
+import { parseGanttChart } from './gantt/parser.ts'
+import { layoutGanttChart } from './gantt/layout.ts'
+import { renderGanttSvg } from './gantt/renderer.ts'
 
 /**
  * Detect the diagram type from the mermaid source text.
  * Returns the type keyword used for routing to the correct pipeline.
  */
-function detectDiagramType(text: string): 'flowchart' | 'sequence' | 'class' | 'er' | 'xychart' {
+function detectDiagramType(text: string): 'flowchart' | 'sequence' | 'class' | 'er' | 'xychart' | 'quadrant' | 'timeline' | 'gantt' {
   const firstLine = text.trim().split(/[\n;]/)[0]?.trim().toLowerCase() ?? ''
 
   if (/^xychart(-beta)?\b/.test(firstLine)) return 'xychart'
   if (/^sequencediagram\s*$/.test(firstLine)) return 'sequence'
   if (/^classdiagram\s*$/.test(firstLine)) return 'class'
   if (/^erdiagram\s*$/.test(firstLine)) return 'er'
+  if (/^quadrantchart\s*$/.test(firstLine)) return 'quadrant'
+  if (/^timeline\s*$/.test(firstLine)) return 'timeline'
+  if (/^gantt\s*$/.test(firstLine)) return 'gantt'
 
   // Default: flowchart/state (handled by parseMermaid internally)
   return 'flowchart'
@@ -143,6 +159,21 @@ export function renderMermaidSVG(
       const chart = parseXYChart(lines)
       const positioned = layoutXYChart(chart, options)
       return renderXYChartSvg(positioned, colors, font, transparent, options.interactive ?? false)
+    }
+    case 'quadrant': {
+      const chart = parseQuadrantChart(lines)
+      const positioned = layoutQuadrantChart(chart, options)
+      return renderQuadrantSvg(positioned, colors, font, transparent)
+    }
+    case 'timeline': {
+      const diagram = parseTimeline(lines)
+      const positioned = layoutTimeline(diagram, options)
+      return renderTimelineSvg(positioned, colors, font, transparent)
+    }
+    case 'gantt': {
+      const chart = parseGanttChart(lines)
+      const positioned = layoutGanttChart(chart, options)
+      return renderGanttSvg(positioned, colors, font, transparent)
     }
     case 'flowchart':
     default: {

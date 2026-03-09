@@ -4,6 +4,8 @@ import type {
 } from './types.ts'
 import type { RenderOptions } from '../types.ts'
 import { estimateTextWidth } from '../styles.ts'
+import { CHART } from '../chart-constants.ts'
+import { CHART_SIZES } from '../design-tokens.ts'
 
 // ============================================================================
 // XY Chart layout engine
@@ -12,18 +14,18 @@ import { estimateTextWidth } from '../styles.ts'
 // direct coordinate-space mapping for axes, bars, lines, and grid.
 // ============================================================================
 
-/** Layout constants — aligned with Chart.js default proportions */
+/** Layout constants — shared values from CHART, plus xychart-specific ones */
 const XY = {
-  plotWidth: 600,
-  plotHeight: 340,
-  padding: 22,
-  titleFontSize: 18,
-  titleFontWeight: 600,
-  titleHeight: 42,
-  axisLabelFontSize: 14,
-  axisLabelFontWeight: 400,
-  axisTitleFontSize: 15,
-  axisTitleFontWeight: 500,
+  plotWidth: CHART_SIZES.xy.plotWidth,
+  plotHeight: CHART_SIZES.xy.plotHeight,
+  padding: CHART.padding,
+  titleFontSize: CHART.titleFontSize,
+  titleFontWeight: CHART.titleFontWeight,
+  titleHeight: CHART.titleHeight,
+  axisLabelFontSize: CHART.axisLabelFontSize,
+  axisLabelFontWeight: CHART.axisLabelFontWeight,
+  axisTitleFontSize: CHART.axisTitleFontSize,
+  axisTitleFontWeight: CHART.axisTitleFontWeight,
   xLabelHeight: 38,
   yLabelWidth: 58,
   yLabelGap: 18,
@@ -32,8 +34,8 @@ const XY = {
   barPadRatio: 0.2,
   barGroupGap: 0,
   maxBarWidth: 40,
-  legendFontSize: 14,
-  legendFontWeight: 400,
+  legendFontSize: CHART.legendFontSize,
+  legendFontWeight: CHART.legendFontWeight,
   legendHeight: 28,
   legendSwatchW: 14,
   legendSwatchH: 14,

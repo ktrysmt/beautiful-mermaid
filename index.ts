@@ -719,7 +719,9 @@ async function generateHtml(): Promise<string> {
       max-width: 100%;
     }
     .hero-diagram-panel .svg-container svg {
-      width: 100%;
+      /* Keep hero diagrams responsive, but never upscale beyond intrinsic SVG size */
+      width: auto;
+      max-width: 100%;
       height: auto;
     }
 
@@ -981,6 +983,7 @@ async function generateHtml(): Promise<string> {
       min-height: 0;     /* flex child: allow shrinking to fit */
     }
     .svg-container svg {
+      width: auto;
       max-width: 100%;
       max-height: 100%;  /* scale down to fit both axes */
       height: auto;

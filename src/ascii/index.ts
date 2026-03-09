@@ -10,6 +10,10 @@
 //   - Sequence diagrams (sequenceDiagram) — column-based timeline layout
 //   - Class diagrams (classDiagram) — level-based UML layout
 //   - ER diagrams (erDiagram) — grid layout with crow's foot notation
+//   - XY Charts (xychart-beta) — bar/line charts
+//   - Quadrant Charts (quadrantChart) — 2x2 scatter plots
+//   - Timelines (timeline) — horizontal period boxes with events
+//   - Gantt Charts (gantt) — task bars on date axis
 //
 // Usage:
 //   import { renderMermaidASCII } from 'beautiful-mermaid'
@@ -25,6 +29,9 @@ import { renderSequenceAscii } from './sequence.ts'
 import { renderClassAscii } from './class-diagram.ts'
 import { renderErAscii } from './er-diagram.ts'
 import { renderXYChartAscii } from './xychart.ts'
+import { renderQuadrantAscii } from './quadrant.ts'
+import { renderTimelineAscii } from './timeline.ts'
+import { renderGanttAscii } from './gantt.ts'
 import { detectColorMode, DEFAULT_ASCII_THEME, diagramColorsToAsciiTheme } from './ansi.ts'
 import type { AsciiConfig, AsciiTheme, ColorMode } from './types.ts'
 
@@ -60,13 +67,16 @@ export interface AsciiRenderOptions {
  * Detect the diagram type from the mermaid source text.
  * Mirrors the detection logic in src/index.ts for the SVG renderer.
  */
-function detectDiagramType(text: string): 'flowchart' | 'sequence' | 'class' | 'er' | 'xychart' {
+function detectDiagramType(text: string): 'flowchart' | 'sequence' | 'class' | 'er' | 'xychart' | 'quadrant' | 'timeline' | 'gantt' {
   const firstLine = text.trim().split('\n')[0]?.trim().toLowerCase() ?? ''
 
   if (/^xychart(-beta)?\b/.test(firstLine)) return 'xychart'
   if (/^sequencediagram\s*$/.test(firstLine)) return 'sequence'
   if (/^classdiagram\s*$/.test(firstLine)) return 'class'
   if (/^erdiagram\s*$/.test(firstLine)) return 'er'
+  if (/^quadrantchart\s*$/.test(firstLine)) return 'quadrant'
+  if (/^timeline\s*$/.test(firstLine)) return 'timeline'
+  if (/^gantt\s*$/.test(firstLine)) return 'gantt'
 
   // Default: flowchart/state (handled by parseMermaid internally)
   return 'flowchart'
@@ -123,6 +133,15 @@ export function renderMermaidASCII(
   switch (diagramType) {
     case 'xychart':
       return renderXYChartAscii(text, config, colorMode, theme)
+
+    case 'quadrant':
+      return renderQuadrantAscii(text, config, colorMode, theme)
+
+    case 'timeline':
+      return renderTimelineAscii(text, config, colorMode, theme)
+
+    case 'gantt':
+      return renderGanttAscii(text, config, colorMode, theme)
 
     case 'sequence':
       return renderSequenceAscii(text, config, colorMode, theme)

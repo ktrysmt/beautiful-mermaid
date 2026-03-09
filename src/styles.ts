@@ -8,6 +8,7 @@
 // ============================================================================
 
 import { measureTextWidth } from './text-metrics'
+import { TYPOGRAPHY } from './design-tokens'
 
 /** Average character width in px at the given font size and weight (proportional font) */
 export function estimateTextWidth(text: string, fontSize: number, fontWeight: number): number {
@@ -34,18 +35,18 @@ export const MONO_FONT_STACK = `${MONO_FONT}, 'SF Mono', 'Fira Code', ui-monospa
 /** Fixed font sizes used in the renderer (in px) */
 export const FONT_SIZES = {
   /** Node label text */
-  nodeLabel: 13,
+  nodeLabel: TYPOGRAPHY.primaryLabel.size,
   /** Edge label text */
-  edgeLabel: 11,
+  edgeLabel: TYPOGRAPHY.edgeMeta.size,
   /** Subgraph header text */
-  groupHeader: 12,
+  groupHeader: TYPOGRAPHY.groupHeader.size,
 } as const
 
 /** Font weights used per element type */
 export const FONT_WEIGHTS = {
-  nodeLabel: 500,
-  edgeLabel: 400,
-  groupHeader: 600,
+  nodeLabel: TYPOGRAPHY.primaryLabel.weight,
+  edgeLabel: TYPOGRAPHY.edgeMeta.weight,
+  groupHeader: TYPOGRAPHY.groupHeader.weight,
 } as const
 
 // ============================================================================

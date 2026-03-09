@@ -3,6 +3,8 @@ import type { DiagramColors } from '../theme.ts'
 import { svgOpenTag, buildStyleBlock } from '../theme.ts'
 import { TEXT_BASELINE_SHIFT, estimateTextWidth } from '../styles.ts'
 import { getSeriesColor, CHART_ACCENT_FALLBACK } from './colors.ts'
+import { CHART } from '../chart-constants.ts'
+import { TYPOGRAPHY } from '../design-tokens.ts'
 
 // ============================================================================
 // XY Chart SVG renderer
@@ -28,22 +30,22 @@ import { getSeriesColor, CHART_ACCENT_FALLBACK } from './colors.ts'
 // ============================================================================
 
 const CHART_FONT = {
-  titleSize: 18,
-  titleWeight: 600,
-  axisTitleSize: 15,
-  axisTitleWeight: 500,
-  labelSize: 14,
-  labelWeight: 400,
-  legendSize: 14,
-  legendWeight: 400,
+  titleSize: CHART.titleFontSize,
+  titleWeight: CHART.titleFontWeight,
+  axisTitleSize: CHART.axisTitleFontSize,
+  axisTitleWeight: CHART.axisTitleFontWeight,
+  labelSize: CHART.axisLabelFontSize,
+  labelWeight: CHART.axisLabelFontWeight,
+  legendSize: CHART.legendFontSize,
+  legendWeight: CHART.legendFontWeight,
   dotRadius: 5,
   lineWidth: 2.5,
   barRadius: 8,
 } as const
 
 const TIP = {
-  fontSize: 15,
-  fontWeight: 500,
+  fontSize: TYPOGRAPHY.tooltipLabel.size,
+  fontWeight: TYPOGRAPHY.tooltipLabel.weight,
   height: 32,
   padX: 14,
   offsetY: 12,

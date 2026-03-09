@@ -8,6 +8,10 @@ site/
 
 # Generated files
 index.html
+compare.html
+
+# Local build caches
+.cache/
 
 # IDE
 .idea/
