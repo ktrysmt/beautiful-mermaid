@@ -1,6 +1,6 @@
 {
-  "name": "beautiful-mermaid",
-  "version": "1.1.3",
+  "name": "@ktrysmt/beautiful-mermaid",
+  "version": "1.1.4",
   "license": "MIT",
   "description": "Render Mermaid diagrams as beautiful SVGs or ASCII art. Ultra-fast, fully themeable, zero DOM dependencies.",
   "type": "module",
@@ -15,11 +15,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lukilabs/beautiful-mermaid"
+    "url": "https://github.com/ktrysmt/beautiful-mermaid"
   },
-  "homepage": "https://github.com/lukilabs/beautiful-mermaid",
+  "homepage": "https://github.com/ktrysmt/beautiful-mermaid",
   "bugs": {
-    "url": "https://github.com/lukilabs/beautiful-mermaid/issues"
+    "url": "https://github.com/ktrysmt/beautiful-mermaid/issues"
   },
   "keywords": [
     "mermaid",
