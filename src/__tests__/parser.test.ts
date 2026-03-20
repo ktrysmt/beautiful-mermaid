@@ -232,6 +232,26 @@ describe('parseMermaid – edges (original)', () => {
     expect(g.edges[0]!.style).toBe('dotted')
   })
 
+  it('parses edge label with space before pipe: -.-> |label|', () => {
+    const g = parseMermaid('graph TD\n  A -.-> |docker pull| B')
+    expect(g.edges[0]!.label).toBe('docker pull')
+    expect(g.edges[0]!.style).toBe('dotted')
+    expect(g.edges[0]!.source).toBe('A')
+    expect(g.edges[0]!.target).toBe('B')
+  })
+
+  it('parses edge label with space before pipe on solid arrow: --> |label|', () => {
+    const g = parseMermaid('graph TD\n  A --> |Yes| B')
+    expect(g.edges[0]!.label).toBe('Yes')
+    expect(g.edges[0]!.style).toBe('solid')
+  })
+
+  it('parses edge label with space before pipe on thick arrow: ==> |label|', () => {
+    const g = parseMermaid('graph TD\n  A ==> |Sure| B')
+    expect(g.edges[0]!.label).toBe('Sure')
+    expect(g.edges[0]!.style).toBe('thick')
+  })
+
   it('parses chained edges: A --> B --> C', () => {
     const g = parseMermaid('graph TD\n  A --> B --> C')
     expect(g.edges).toHaveLength(2)
