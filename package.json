@@ -1,6 +1,6 @@
 {
   "name": "@ktrysmt/beautiful-mermaid",
-  "version": "1.1.5",
+  "version": "1.2.0",
   "license": "MIT",
   "description": "Render Mermaid diagrams as beautiful SVGs or ASCII art. Ultra-fast, fully themeable, zero DOM dependencies.",
   "type": "module",
@@ -35,7 +35,7 @@
     "visualization",
     "theming"
   ],
-  "author": "Craft Docs",
+  "author": "Kotaro Yoshimatsu",
   "files": ["src/", "dist/", "LICENSE", "README.md"],
   "scripts": {
     "test": "bun test src/__tests__/",

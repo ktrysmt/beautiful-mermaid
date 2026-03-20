@@ -570,7 +570,7 @@ function drawArrowHead(
 
 /**
  * Draw corner characters at path bends (where the direction changes).
- * Uses ┌┐└┘ in Unicode mode, + in ASCII mode.
+ * Uses ╭╮╰╯ (rounded) in Unicode mode, + in ASCII mode.
  */
 function drawCorners(graph: AsciiGraph, path: GridCoord[]): Canvas {
   const canvas = copyCanvas(graph.canvas)
@@ -585,16 +585,16 @@ function drawCorners(graph: AsciiGraph, path: GridCoord[]): Canvas {
     if (!graph.config.useAscii) {
       if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Down)) ||
           (dirEquals(prevDir, Up) && dirEquals(nextDir, Left))) {
-        corner = '┐'
+        corner = '╮'
       } else if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Left))) {
-        corner = '┘'
+        corner = '╯'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Down)) ||
                  (dirEquals(prevDir, Up) && dirEquals(nextDir, Right))) {
-        corner = '┌'
+        corner = '╭'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Right))) {
-        corner = '└'
+        corner = '╰'
       } else {
         corner = '+'
       }
@@ -783,16 +783,16 @@ function drawBundledEdgeSegment(
     if (!useAscii) {
       if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Down)) ||
           (dirEquals(prevDir, Up) && dirEquals(nextDir, Left))) {
-        corner = '┐'
+        corner = '╮'
       } else if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Left))) {
-        corner = '┘'
+        corner = '╯'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Down)) ||
                  (dirEquals(prevDir, Up) && dirEquals(nextDir, Right))) {
-        corner = '┌'
+        corner = '╭'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Right))) {
-        corner = '└'
+        corner = '╰'
       } else {
         corner = '+'
       }
@@ -879,16 +879,16 @@ function drawBundleSharedPath(graph: AsciiGraph, bundle: EdgeBundle): [Canvas, C
     if (!useAscii) {
       if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Down)) ||
           (dirEquals(prevDir, Up) && dirEquals(nextDir, Left))) {
-        corner = '┐'
+        corner = '╮'
       } else if ((dirEquals(prevDir, Right) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Left))) {
-        corner = '┘'
+        corner = '╯'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Down)) ||
                  (dirEquals(prevDir, Up) && dirEquals(nextDir, Right))) {
-        corner = '┌'
+        corner = '╭'
       } else if ((dirEquals(prevDir, Left) && dirEquals(nextDir, Up)) ||
                  (dirEquals(prevDir, Down) && dirEquals(nextDir, Right))) {
-        corner = '└'
+        corner = '╰'
       } else {
         corner = '+'
       }

@@ -440,11 +440,11 @@ export function renderClassAscii(text: string, config: AsciiConfig, colorMode?: 
         }
         if (!useAscii && exitY < (canvas[0]?.length ?? 0)) {
           if (fromCX < routeX) {
-            setC(fromCX, exitY, '└', 'corner')
-            setC(routeX, exitY, '┐', 'corner')
+            setC(fromCX, exitY, '╰', 'corner')
+            setC(routeX, exitY, '╮', 'corner')
           } else {
-            setC(fromCX, exitY, '┘', 'corner')
-            setC(routeX, exitY, '┌', 'corner')
+            setC(fromCX, exitY, '╯', 'corner')
+            setC(routeX, exitY, '╭', 'corner')
           }
         }
 
@@ -462,11 +462,11 @@ export function renderClassAscii(text: string, config: AsciiConfig, colorMode?: 
           }
           if (!useAscii && entryY < (canvas[0]?.length ?? 0)) {
             if (routeX < toCX) {
-              setC(routeX, entryY, '└', 'corner')
-              setC(toCX, entryY, '┐', 'corner')
+              setC(routeX, entryY, '╰', 'corner')
+              setC(toCX, entryY, '╮', 'corner')
             } else {
-              setC(routeX, entryY, '┘', 'corner')
-              setC(toCX, entryY, '┌', 'corner')
+              setC(routeX, entryY, '╯', 'corner')
+              setC(toCX, entryY, '╭', 'corner')
             }
           }
         }
@@ -499,8 +499,8 @@ export function renderClassAscii(text: string, config: AsciiConfig, colorMode?: 
             setC(x, midY, lineH, 'line')
           }
           if (!useAscii) {
-            setC(fromCX, midY, fromCX < toCX ? '└' : '┘', 'corner')
-            setC(toCX, midY, fromCX < toCX ? '┐' : '┌', 'corner')
+            setC(fromCX, midY, fromCX < toCX ? '╰' : '╯', 'corner')
+            setC(toCX, midY, fromCX < toCX ? '╮' : '╭', 'corner')
           }
         }
 
@@ -534,8 +534,8 @@ export function renderClassAscii(text: string, config: AsciiConfig, colorMode?: 
           setC(x, midY, lineH, 'line')
         }
         if (!useAscii && midY >= 0 && midY < totalH) {
-          setC(fromCX, midY, fromCX < toCX ? '┌' : '┐', 'corner')
-          setC(toCX, midY, fromCX < toCX ? '┘' : '└', 'corner')
+          setC(fromCX, midY, fromCX < toCX ? '╭' : '╮', 'corner')
+          setC(toCX, midY, fromCX < toCX ? '╯' : '╰', 'corner')
         }
       }
 
