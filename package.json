@@ -1,6 +1,6 @@
 {
   "name": "@ktrysmt/beautiful-mermaid",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "license": "MIT",
   "description": "Render Mermaid diagrams as beautiful SVGs or ASCII art. Ultra-fast, fully themeable, zero DOM dependencies.",
   "type": "module",
@@ -10,7 +10,8 @@
     ".": {
       "bun": "./src/index.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "repository": {
