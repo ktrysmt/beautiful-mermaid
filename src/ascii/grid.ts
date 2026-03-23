@@ -8,7 +8,7 @@
 // ============================================================================
 
 import type {
-  GridCoord, DrawingCoord, Direction, AsciiGraph, AsciiNode, AsciiSubgraph,
+  GridCoord, DrawingCoord, Direction, AsciiGraph, AsciiNode, AsciiEdge, AsciiSubgraph,
 } from './types.ts'
 import { gridKey } from './types.ts'
 import { mkCanvas, setCanvasSizeToGrid, setRoleCanvasSizeToGrid } from './canvas.ts'
@@ -554,18 +554,25 @@ export function createMapping(graph: AsciiGraph): void {
   // Route bundled edges through junction points
   processBundles(graph)
 
+  // Track which grid cells are occupied by previously-routed edges.
+  // This allows A* to penalize overlap with unrelated edges, producing
+  // cleaner diagrams where distinct edges follow visually distinct paths.
+  const occupiedCells = new Map<string, AsciiEdge[]>()
+
   // Route non-bundled edges via A* and determine label positions
   for (const edge of graph.edges) {
     // Skip edges that were already routed as part of a bundle
     if (edge.bundle && edge.path.length > 0) {
       increaseGridSizeForPath(graph, edge.path)
       determineLabelLine(graph, edge)
+      markPathCellsOccupied(occupiedCells, edge)
       continue
     }
 
-    determinePath(graph, edge)
+    determinePath(graph, edge, occupiedCells)
     increaseGridSizeForPath(graph, edge.path)
     determineLabelLine(graph, edge)
+    markPathCellsOccupied(occupiedCells, edge)
   }
 
   // Convert grid coords → drawing coords and generate box drawings
@@ -579,6 +586,56 @@ export function createMapping(graph: AsciiGraph): void {
   setRoleCanvasSizeToGrid(graph.roleCanvas, graph.columnWidth, graph.rowHeight)
   calculateSubgraphBoundingBoxes(graph)
   offsetDrawingForSubgraphs(graph)
+}
+
+// ============================================================================
+// Edge occupancy tracking
+// ============================================================================
+
+/**
+ * Record all grid cells traversed by an edge's path into the occupancy map.
+ * For merged paths (where consecutive waypoints may skip cells), we expand
+ * the segment back into unit-step cells so every traversed cell is tracked.
+ */
+function markPathCellsOccupied(
+  occupied: Map<string, AsciiEdge[]>,
+  edge: AsciiEdge,
+): void {
+  const path = edge.path
+  for (let i = 0; i < path.length; i++) {
+    const cur = path[i]!
+    // Expand the segment between consecutive waypoints
+    if (i + 1 < path.length) {
+      const next = path[i + 1]!
+      const dx = Math.sign(next.x - cur.x)
+      const dy = Math.sign(next.y - cur.y)
+      let cx = cur.x
+      let cy = cur.y
+      while (cx !== next.x || cy !== next.y) {
+        const key = `${cx},${cy}`
+        appendOccupiedEdge(occupied, key, edge)
+        cx += dx
+        cy += dy
+      }
+    } else {
+      // Last point
+      const key = `${cur.x},${cur.y}`
+      appendOccupiedEdge(occupied, key, edge)
+    }
+  }
+}
+
+function appendOccupiedEdge(
+  occupied: Map<string, AsciiEdge[]>,
+  key: string,
+  edge: AsciiEdge,
+): void {
+  const list = occupied.get(key)
+  if (list) {
+    if (!list.includes(edge)) list.push(edge)
+  } else {
+    occupied.set(key, [edge])
+  }
 }
 
 // ============================================================================

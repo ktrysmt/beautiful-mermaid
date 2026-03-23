@@ -7,6 +7,7 @@
 // ============================================================================
 
 import type { GridCoord, Direction, AsciiEdge, AsciiGraph } from './types.ts'
+import { gridKey } from './types.ts'
 import { displayWidth } from './cjk.ts'
 import {
   Up, Down, Left, Right, UpperRight, UpperLeft, LowerRight, LowerLeft, Middle,
@@ -153,7 +154,7 @@ export function determineStartAndEndDir(
  * Uses the effective direction for edge routing, respecting subgraph direction overrides
  * when both source and target are in the same subgraph.
  */
-export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
+export function determinePath(graph: AsciiGraph, edge: AsciiEdge, occupiedCells?: Map<string, AsciiEdge[]>): void {
   // Determine effective direction for this edge
   // If both nodes are in the same subgraph with a direction override, use it
   // Otherwise, use the graph's direction (not source's effective direction)
@@ -169,12 +170,12 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
   // Try preferred path
   const prefFrom = gridCoordDirection(edge.from.gridCoord!, preferredDir)
   const prefTo = gridCoordDirection(edge.to.gridCoord!, preferredOppositeDir)
-  let preferredPath = getPath(graph.grid, prefFrom, prefTo)
+  let preferredPath = getPath(graph.grid, prefFrom, prefTo, occupiedCells, edge)
 
   // Try alternative path
   const altFrom = gridCoordDirection(edge.from.gridCoord!, alternativeDir)
   const altTo = gridCoordDirection(edge.to.gridCoord!, alternativeOppositeDir)
-  let alternativePath = getPath(graph.grid, altFrom, altTo)
+  let alternativePath = getPath(graph.grid, altFrom, altTo, occupiedCells, edge)
 
   // Case 1: Both paths found — pick the shorter one
   if (preferredPath !== null && alternativePath !== null) {

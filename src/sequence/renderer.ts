@@ -3,6 +3,7 @@ import type { DiagramColors } from '../theme.ts'
 import { svgOpenTag, buildStyleBlock } from '../theme.ts'
 import { FONT_SIZES, FONT_WEIGHTS, STROKE_WIDTHS, ARROW_HEAD, estimateTextWidth, TEXT_BASELINE_SHIFT } from '../styles.ts'
 import { renderMultilineText, escapeXml as escapeXmlUtil } from '../multiline-utils.ts'
+import { f } from '../render-utils.ts'
 
 // ============================================================================
 // Sequence diagram SVG renderer
@@ -123,7 +124,7 @@ function renderActor(actor: PositionedActor): string {
     const iconStroke = 'var(--_line)'      // use line color for actor icon strokes
 
     parts.push(
-      `  <g transform="translate(${tx},${ty}) scale(${s})">` +
+      f`  <g transform="translate(${tx},${ty}) scale(${s})">` +
       // Outer circle
       `\n    <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="none" stroke="${iconStroke}" stroke-width="${sw}" />` +
       // Head
@@ -141,7 +142,7 @@ function renderActor(actor: PositionedActor): string {
     // Participant: rectangle box with label (supports multi-line)
     const boxX = x - width / 2
     parts.push(
-      `  <rect x="${boxX}" y="${y}" width="${width}" height="${height}" rx="4" ry="4" ` +
+      f`  <rect x="${boxX}" y="${y}" width="${width}" height="${height}" rx="4" ry="4" ` +
       `fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
     )
     parts.push(

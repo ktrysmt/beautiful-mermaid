@@ -56,6 +56,17 @@ describe('renderMermaidSVG – options', () => {
     expect(svg).toContain("'JetBrains Mono'")
   })
 
+  it('respects mergeEdges option', () => {
+    const diagram = 'graph TD\n  A --> B\n  A --> C'
+    const withBundling = renderMermaidSVG(diagram, { mergeEdges: true })
+    const withoutBundling = renderMermaidSVG(diagram, { mergeEdges: false })
+    expect(withBundling).not.toBe(withoutBundling)
+    expect(withBundling).toContain('<polyline')
+    expect(withoutBundling).toContain('<polyline')
+    const polylineCount = (svg: string) => (svg.match(/<polyline/g) ?? []).length
+    expect(polylineCount(withBundling)).toBe(polylineCount(withoutBundling))
+  })
+
   it('respects padding option', () => {
     const small = renderMermaidSVG('graph TD\n  A --> B', { padding: 10 })
     const large = renderMermaidSVG('graph TD\n  A --> B', { padding: 80 })

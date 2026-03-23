@@ -6,7 +6,7 @@
 // paths between nodes on the grid. Prefers straight lines over zigzags.
 // ============================================================================
 
-import type { GridCoord, AsciiNode } from './types.ts'
+import type { GridCoord, AsciiNode, AsciiEdge } from './types.ts'
 import { gridKey, gridCoordEquals } from './types.ts'
 
 // ============================================================================
@@ -121,14 +121,46 @@ function isFreeInGrid(grid: Map<string, AsciiNode>, c: GridCoord): boolean {
  */
 const MAX_ITERATIONS = 50_000
 
+/** Penalty for overlapping with an unrelated previously-routed edge. */
+const OCCUPIED_EDGE_PENALTY = 4
+/** No penalty for overlapping with a related edge (same fan-in/fan-out family). */
+const RELATED_EDGE_PENALTY = 0
+
+/**
+ * Compute occupancy penalty for stepping into a cell that already has routed edges.
+ * Related edges (same source or target) get no penalty; unrelated edges get OCCUPIED_EDGE_PENALTY.
+ */
+function getOccupancyPenalty(
+  cellKey: string,
+  occupied: Map<string, AsciiEdge[]>,
+  edge?: AsciiEdge,
+): number {
+  const occupants = occupied.get(cellKey)
+  if (!occupants || occupants.length === 0) return 0
+  if (!edge) return OCCUPIED_EDGE_PENALTY
+  // Allow overlap with related edges (same source or target = same fan-in/fan-out family)
+  for (const occ of occupants) {
+    if (occ.from !== edge.from && occ.to !== edge.to &&
+        occ.from !== edge.to && occ.to !== edge.from) {
+      return OCCUPIED_EDGE_PENALTY
+    }
+  }
+  return RELATED_EDGE_PENALTY
+}
+
 /**
  * Find a path from `from` to `to` on the grid using A*.
  * Returns the path as an array of GridCoords, or null if no path exists.
+ *
+ * When `occupied` is provided, paths through cells already used by unrelated edges
+ * incur a penalty, encouraging visually distinct routes.
  */
 export function getPath(
   grid: Map<string, AsciiNode>,
   from: GridCoord,
   to: GridCoord,
+  occupied?: Map<string, AsciiEdge[]>,
+  edge?: AsciiEdge,
 ): GridCoord[] | null {
   const pq = new MinHeap()
   pq.push({ coord: from, priority: 0 })
@@ -168,8 +200,9 @@ export function getPath(
         continue
       }
 
-      const newCost = currentCost + 1
       const nextKey = gridKey(next)
+      const occPenalty = occupied ? getOccupancyPenalty(nextKey, occupied, edge) : 0
+      const newCost = currentCost + 1 + occPenalty
       const existingCost = costSoFar.get(nextKey)
 
       if (existingCost === undefined || newCost < existingCost) {

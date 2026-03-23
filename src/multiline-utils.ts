@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { LINE_HEIGHT_RATIO } from './text-metrics.ts'
+import { f } from './render-utils.ts'
 
 /**
  * Normalize label text: strip surrounding quotes, convert <br> tags and
@@ -164,7 +165,7 @@ export function renderMultilineText(
   // Single line — simple text element
   if (lines.length === 1) {
     const dy = fontSize * baselineShift
-    return `<text x="${cx}" y="${cy}" ${attrs} dy="${dy}">${renderLineContent(text)}</text>`
+    return f`<text x="${cx}" y="${cy}" ${attrs} dy="${dy}">${renderLineContent(text)}</text>`
   }
 
   // Multi-line — use tspan elements with vertical centering
@@ -174,7 +175,7 @@ export function renderMultilineText(
 
   const tspans = lines.map((line, i) => {
     const dy = i === 0 ? firstDy : lineHeight
-    return `<tspan x="${cx}" dy="${dy}">${renderLineContent(line)}</tspan>`
+    return f`<tspan x="${cx}" dy="${dy}">${renderLineContent(line)}</tspan>`
   }).join('')
 
   return `<text x="${cx}" y="${cy}" ${attrs}>${tspans}</text>`
@@ -210,8 +211,8 @@ export function renderMultilineTextWithBackground(
   const bgWidth = textWidth + padding * 2
   const bgHeight = textHeight + padding * 2
 
-  const rect = `<rect x="${cx - bgWidth / 2}" y="${cy - bgHeight / 2}" ` +
-    `width="${bgWidth}" height="${bgHeight}" ${bgAttrs} />`
+  const rect = f`<rect x="${cx - bgWidth / 2}" y="${cy - bgHeight / 2}" ` +
+    f`width="${bgWidth}" height="${bgHeight}" ${bgAttrs} />`
 
   const textEl = renderMultilineText(text, cx, cy, fontSize, textAttrs)
 

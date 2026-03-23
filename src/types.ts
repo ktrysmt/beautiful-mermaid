@@ -161,4 +161,6 @@ export interface RenderOptions {
   transparent?: boolean
   /** Enable hover tooltips on chart data points (xychart only). Default: false */
   interactive?: boolean
+  /** Whether to enable edge bundling to reduce visual clutter by merging overlapping edge paths into shared segments. Default: true */
+  mergeEdges?: boolean
 }

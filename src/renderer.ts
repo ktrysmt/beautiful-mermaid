@@ -4,6 +4,7 @@ import { svgOpenTag, buildStyleBlock } from './theme.ts'
 import { FONT_SIZES, FONT_WEIGHTS, STROKE_WIDTHS, ARROW_HEAD, estimateTextWidth, TEXT_BASELINE_SHIFT } from './styles.ts'
 import { measureMultilineText } from './text-metrics.ts'
 import { renderMultilineText, renderMultilineTextWithBackground, escapeXml } from './multiline-utils.ts'
+import { f } from './render-utils.ts'
 
 // ============================================================================
 // SVG renderer — converts a PositionedGraph into an SVG string.
@@ -236,7 +237,7 @@ function renderEdge(edge: PositionedEdge): string {
 
 /** Convert points to SVG polyline points attribute: "x1,y1 x2,y2 ..." */
 function pointsToPolylinePath(points: Point[]): string {
-  return points.map(p => `${p.x},${p.y}`).join(' ')
+  return points.map(p => f`${p.x},${p.y}`).join(' ')
 }
 
 function renderEdgeLabel(edge: PositionedEdge, font: string): string {
@@ -397,8 +398,8 @@ function renderRoundedRect(x: number, y: number, w: number, h: number, fill: str
 function renderStadium(x: number, y: number, w: number, h: number, fill: string, stroke: string, sw: string): string {
   const r = h / 2
   return (
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" ` +
-    `rx="${r}" ry="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
+    f`<rect x="${x}" y="${y}" width="${w}" height="${h}" ` +
+    f`rx="${r}" ry="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
   )
 }
 
@@ -407,8 +408,8 @@ function renderCircle(x: number, y: number, w: number, h: number, fill: string, 
   const cy = y + h / 2
   const r = Math.min(w, h) / 2
   return (
-    `<circle cx="${cx}" cy="${cy}" r="${r}" ` +
-    `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
+    f`<circle cx="${cx}" cy="${cy}" r="${r}" ` +
+    f`fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
   )
 }
 
@@ -418,10 +419,10 @@ function renderDiamond(x: number, y: number, w: number, h: number, fill: string,
   const hw = w / 2
   const hh = h / 2
   const points = [
-    `${cx},${cy - hh}`,   // top
-    `${cx + hw},${cy}`,   // right
-    `${cx},${cy + hh}`,   // bottom
-    `${cx - hw},${cy}`,   // left
+    f`${cx},${cy - hh}`,   // top
+    f`${cx + hw},${cy}`,   // right
+    f`${cx},${cy + hh}`,   // bottom
+    f`${cx - hw},${cy}`,   // left
   ].join(' ')
 
   return (
@@ -451,10 +452,10 @@ function renderDoubleCircle(x: number, y: number, w: number, h: number, fill: st
   const outerR = Math.min(w, h) / 2
   const innerR = outerR - 5 // 5px gap between rings
   return (
-    `<circle cx="${cx}" cy="${cy}" r="${outerR}" ` +
-    `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />` +
-    `\n<circle cx="${cx}" cy="${cy}" r="${innerR}" ` +
-    `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
+    f`<circle cx="${cx}" cy="${cy}" r="${outerR}" ` +
+    f`fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />` +
+    f`\n<circle cx="${cx}" cy="${cy}" r="${innerR}" ` +
+    f`fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
   )
 }
 
@@ -462,12 +463,12 @@ function renderDoubleCircle(x: number, y: number, w: number, h: number, fill: st
 function renderHexagon(x: number, y: number, w: number, h: number, fill: string, stroke: string, sw: string): string {
   const inset = h / 4 // horizontal inset for the angled sides
   const points = [
-    `${x + inset},${y}`,           // top-left
-    `${x + w - inset},${y}`,       // top-right
-    `${x + w},${y + h / 2}`,       // mid-right
-    `${x + w - inset},${y + h}`,   // bottom-right
-    `${x + inset},${y + h}`,       // bottom-left
-    `${x},${y + h / 2}`,           // mid-left
+    f`${x + inset},${y}`,           // top-left
+    f`${x + w - inset},${y}`,       // top-right
+    f`${x + w},${y + h / 2}`,       // mid-right
+    f`${x + w - inset},${y + h}`,   // bottom-right
+    f`${x + inset},${y + h}`,       // bottom-left
+    f`${x},${y + h / 2}`,           // mid-left
   ].join(' ')
 
   return `<polygon points="${points}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
@@ -484,17 +485,17 @@ function renderCylinder(x: number, y: number, w: number, h: number, fill: string
 
   return (
     // Body rectangle (no top border — covered by top ellipse)
-    `<rect x="${x}" y="${bodyTop}" width="${w}" height="${bodyH}" ` +
-    `fill="${fill}" stroke="none" />` +
+    f`<rect x="${x}" y="${bodyTop}" width="${w}" height="${bodyH}" ` +
+    f`fill="${fill}" stroke="none" />` +
     // Left and right body borders
-    `\n<line x1="${x}" y1="${bodyTop}" x2="${x}" y2="${bodyTop + bodyH}" stroke="${stroke}" stroke-width="${sw}" />` +
-    `\n<line x1="${x + w}" y1="${bodyTop}" x2="${x + w}" y2="${bodyTop + bodyH}" stroke="${stroke}" stroke-width="${sw}" />` +
+    f`\n<line x1="${x}" y1="${bodyTop}" x2="${x}" y2="${bodyTop + bodyH}" stroke="${stroke}" stroke-width="${sw}" />` +
+    f`\n<line x1="${x + w}" y1="${bodyTop}" x2="${x + w}" y2="${bodyTop + bodyH}" stroke="${stroke}" stroke-width="${sw}" />` +
     // Bottom ellipse (half visible)
-    `\n<ellipse cx="${cx}" cy="${y + h - ry}" rx="${w / 2}" ry="${ry}" ` +
-    `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />` +
+    f`\n<ellipse cx="${cx}" cy="${y + h - ry}" rx="${w / 2}" ry="${ry}" ` +
+    f`fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />` +
     // Top ellipse (full, on top)
-    `\n<ellipse cx="${cx}" cy="${bodyTop}" rx="${w / 2}" ry="${ry}" ` +
-    `fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
+    f`\n<ellipse cx="${cx}" cy="${bodyTop}" rx="${w / 2}" ry="${ry}" ` +
+    f`fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
   )
 }
 
@@ -502,11 +503,11 @@ function renderCylinder(x: number, y: number, w: number, h: number, fill: string
 function renderAsymmetric(x: number, y: number, w: number, h: number, fill: string, stroke: string, sw: string): string {
   const indent = 12 // how far the point indents
   const points = [
-    `${x + indent},${y}`,       // top-left (indented)
-    `${x + w},${y}`,            // top-right
-    `${x + w},${y + h}`,        // bottom-right
-    `${x + indent},${y + h}`,   // bottom-left (indented)
-    `${x},${y + h / 2}`,        // left point
+    f`${x + indent},${y}`,       // top-left (indented)
+    f`${x + w},${y}`,            // top-right
+    f`${x + w},${y + h}`,        // bottom-right
+    f`${x + indent},${y + h}`,   // bottom-left (indented)
+    f`${x},${y + h / 2}`,        // left point
   ].join(' ')
 
   return `<polygon points="${points}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
@@ -516,10 +517,10 @@ function renderAsymmetric(x: number, y: number, w: number, h: number, fill: stri
 function renderTrapezoid(x: number, y: number, w: number, h: number, fill: string, stroke: string, sw: string): string {
   const inset = w * 0.15 // top edge is narrower by this amount on each side
   const points = [
-    `${x + inset},${y}`,         // top-left (indented)
-    `${x + w - inset},${y}`,     // top-right (indented)
-    `${x + w},${y + h}`,         // bottom-right (full width)
-    `${x},${y + h}`,             // bottom-left (full width)
+    f`${x + inset},${y}`,         // top-left (indented)
+    f`${x + w - inset},${y}`,     // top-right (indented)
+    f`${x + w},${y + h}`,         // bottom-right (full width)
+    f`${x},${y + h}`,             // bottom-left (full width)
   ].join(' ')
 
   return `<polygon points="${points}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
@@ -529,10 +530,10 @@ function renderTrapezoid(x: number, y: number, w: number, h: number, fill: strin
 function renderTrapezoidAlt(x: number, y: number, w: number, h: number, fill: string, stroke: string, sw: string): string {
   const inset = w * 0.15 // bottom edge is narrower
   const points = [
-    `${x},${y}`,                     // top-left (full width)
-    `${x + w},${y}`,                 // top-right (full width)
-    `${x + w - inset},${y + h}`,     // bottom-right (indented)
-    `${x + inset},${y + h}`,         // bottom-left (indented)
+    f`${x},${y}`,                     // top-left (full width)
+    f`${x + w},${y}`,                 // top-right (full width)
+    f`${x + w - inset},${y + h}`,     // bottom-right (indented)
+    f`${x + inset},${y + h}`,         // bottom-left (indented)
   ].join(' ')
 
   return `<polygon points="${points}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" />`
