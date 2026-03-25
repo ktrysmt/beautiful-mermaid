@@ -10,16 +10,10 @@ import type { GridCoord, Direction, AsciiEdge, AsciiGraph } from './types.ts'
 import { displayWidth } from './cjk.ts'
 import {
   Up, Down, Left, Right, UpperRight, UpperLeft, LowerRight, LowerLeft, Middle,
-  gridCoordDirection, gridKey,
+  gridCoordDirection,
 } from './types.ts'
 import { getPath, mergePath } from './pathfinder.ts'
 import { getEffectiveDirection, getNodeSubgraph } from './grid.ts'
-
-/** Shared trunks for the same source/target are allowed without extra cost. */
-const RELATED_EDGE_PENALTY = 0
-
-/** Unrelated overlap is penalized so the chosen route preserves edge meaning. */
-const OCCUPIED_EDGE_PENALTY = 4
 
 // ============================================================================
 // Direction utilities
@@ -158,11 +152,8 @@ export function determineStartAndEndDir(
  *
  * Uses the effective direction for edge routing, respecting subgraph direction overrides
  * when both source and target are in the same subgraph.
- *
- * `occupiedCells` is a soft-constraint map of previously routed edge cells.
- * It does not block routing; it only influences which candidate path wins.
  */
-export function determinePath(graph: AsciiGraph, edge: AsciiEdge, occupiedCells?: Map<string, AsciiEdge[]>): void {
+export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
   // Determine effective direction for this edge
   // If both nodes are in the same subgraph with a direction override, use it
   // Otherwise, use the graph's direction (not source's effective direction)
@@ -178,24 +169,19 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge, occupiedCells?
   // Try preferred path
   const prefFrom = gridCoordDirection(edge.from.gridCoord!, preferredDir)
   const prefTo = gridCoordDirection(edge.to.gridCoord!, preferredOppositeDir)
-  let preferredPath = getPath(graph.grid, prefFrom, prefTo, occupiedCells, edge)
+  let preferredPath = getPath(graph.grid, prefFrom, prefTo)
 
   // Try alternative path
   const altFrom = gridCoordDirection(edge.from.gridCoord!, alternativeDir)
   const altTo = gridCoordDirection(edge.to.gridCoord!, alternativeOppositeDir)
-  let alternativePath = getPath(graph.grid, altFrom, altTo, occupiedCells, edge)
+  let alternativePath = getPath(graph.grid, altFrom, altTo)
 
   // Case 1: Both paths found — pick the shorter one
   if (preferredPath !== null && alternativePath !== null) {
-    const preferredScore = scorePath(preferredPath, occupiedCells, edge)
-    const alternativeScore = scorePath(alternativePath, occupiedCells, edge)
     preferredPath = mergePath(preferredPath)
     alternativePath = mergePath(alternativePath)
 
-    if (
-      preferredScore < alternativeScore
-      || (preferredScore === alternativeScore && preferredPath.length <= alternativePath.length)
-    ) {
+    if (preferredPath.length <= alternativePath.length) {
       edge.startDir = preferredDir
       edge.endDir = preferredOppositeDir
       edge.path = preferredPath
@@ -230,27 +216,6 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge, occupiedCells?
   edge.startDir = preferredDir
   edge.endDir = preferredOppositeDir
   edge.path = [prefFrom, prefTo]
-}
-
-/**
- * Score a routed path using both geometric length and previously-routed edge overlap.
- * This lets candidate selection prefer a slightly longer path when the shorter one
- * would merge unrelated edges into a misleading branch.
- */
-function scorePath(path: GridCoord[], occupiedCells?: Map<string, AsciiEdge[]>, edge?: AsciiEdge): number {
-  let score = Math.max(path.length - 1, 0)
-
-  if (!occupiedCells || !edge) return score
-
-  for (let i = 1; i < path.length - 1; i++) {
-    const occupants = occupiedCells.get(gridKey(path[i]!))
-    if (!occupants || occupants.length === 0) continue
-
-    const allRelated = occupants.every(occupant => occupant.from === edge.from || occupant.to === edge.to)
-    score += allRelated ? RELATED_EDGE_PENALTY : OCCUPIED_EDGE_PENALTY
-  }
-
-  return score
 }
 
 /**
