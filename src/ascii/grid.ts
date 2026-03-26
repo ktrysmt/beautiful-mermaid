@@ -313,20 +313,45 @@ function ensureSubgraphSpacing(graph: AsciiGraph): void {
       const sg1 = rootSubgraphs[i]!
       const sg2 = rootSubgraphs[j]!
 
+      // Check for 2D overlap (use <= for touching/equal boundaries)
+      const hOverlap = sg1.minX <= sg2.maxX && sg1.maxX >= sg2.minX
+      const vOverlap = sg1.minY <= sg2.maxY && sg1.maxY >= sg2.minY
+
+      if (!hOverlap || !vOverlap) continue
+
+      // Both axes overlap — need to separate.
+      // Use <= (not <) so equal min values are handled.
       // Horizontal overlap → adjust vertical
-      if (sg1.minX < sg2.maxX && sg1.maxX > sg2.minX) {
-        if (sg1.maxY >= sg2.minY - minSpacing && sg1.minY < sg2.minY) {
-          sg2.minY = sg1.maxY + minSpacing + 1
-        } else if (sg2.maxY >= sg1.minY - minSpacing && sg2.minY < sg1.minY) {
-          sg1.minY = sg2.maxY + minSpacing + 1
+      if (hOverlap) {
+        if (sg1.maxY >= sg2.minY - minSpacing && sg1.minY <= sg2.minY) {
+          const newMinY = sg1.maxY + minSpacing + 1
+          // Preserve bbox height: shift maxY if newMinY would exceed it
+          if (newMinY > sg2.maxY) {
+            sg2.maxY = newMinY + (sg2.maxY - sg2.minY)
+          }
+          sg2.minY = newMinY
+        } else if (sg2.maxY >= sg1.minY - minSpacing && sg2.minY <= sg1.minY) {
+          const newMinY = sg2.maxY + minSpacing + 1
+          if (newMinY > sg1.maxY) {
+            sg1.maxY = newMinY + (sg1.maxY - sg1.minY)
+          }
+          sg1.minY = newMinY
         }
       }
       // Vertical overlap → adjust horizontal
-      if (sg1.minY < sg2.maxY && sg1.maxY > sg2.minY) {
-        if (sg1.maxX >= sg2.minX - minSpacing && sg1.minX < sg2.minX) {
-          sg2.minX = sg1.maxX + minSpacing + 1
-        } else if (sg2.maxX >= sg1.minX - minSpacing && sg2.minX < sg1.minX) {
-          sg1.minX = sg2.maxX + minSpacing + 1
+      if (sg1.minY <= sg2.maxY && sg1.maxY >= sg2.minY) {
+        if (sg1.maxX >= sg2.minX - minSpacing && sg1.minX <= sg2.minX) {
+          const newMinX = sg1.maxX + minSpacing + 1
+          if (newMinX > sg2.maxX) {
+            sg2.maxX = newMinX + (sg2.maxX - sg2.minX)
+          }
+          sg2.minX = newMinX
+        } else if (sg2.maxX >= sg1.minX - minSpacing && sg2.minX <= sg1.minX) {
+          const newMinX = sg2.maxX + minSpacing + 1
+          if (newMinX > sg1.maxX) {
+            sg1.maxX = newMinX + (sg1.maxX - sg1.minX)
+          }
+          sg1.minX = newMinX
         }
       }
     }
@@ -435,6 +460,18 @@ export function createMapping(graph: AsciiGraph): void {
   }
   const shouldSeparate = dir === 'LR' && hasExternalRoots && hasSubgraphRootsWithEdges
 
+  // Identify downstream subgraphs — root-level subgraphs that receive
+  // cross-subgraph edges. Their roots are deferred so upstream subgraphs
+  // are laid out above them in TD mode (or to the left in LR mode).
+  const downstreamSgs = new Set<AsciiSubgraph>()
+  for (const edge of graph.edges) {
+    const fromSg = getNodeSubgraph(graph, edge.from)
+    const toSg = getNodeSubgraph(graph, edge.to)
+    if (fromSg && toSg && fromSg !== toSg && !fromSg.parent && !toSg.parent) {
+      downstreamSgs.add(toSg)
+    }
+  }
+
   let externalRootNodes: AsciiNode[]
   let subgraphRootNodes: AsciiNode[] = []
 
@@ -445,11 +482,24 @@ export function createMapping(graph: AsciiGraph): void {
     externalRootNodes = rootNodes
   }
 
-  // Place external root nodes, grouped by their immediate downstream target.
+  // Split roots into primary (placed now) and deferred (placed when their
+  // subgraph is first entered via a cross-subgraph edge).
+  const deferredRoots = new Set<AsciiNode>()
+  const primaryRoots: AsciiNode[] = []
+  for (const root of externalRootNodes) {
+    const sg = getNodeSubgraph(graph, root)
+    if (sg && downstreamSgs.has(sg)) {
+      deferredRoots.add(root)
+    } else {
+      primaryRoots.push(root)
+    }
+  }
+
+  // Place primary root nodes, grouped by their immediate downstream target.
   // Roots feeding into the same target are placed contiguously so that edge
   // paths from different fan-in groups don't overlap.
   const rootsByTarget = new Map<string, AsciiNode[]>()
-  for (const root of externalRootNodes) {
+  for (const root of primaryRoots) {
     const children = getChildren(graph, root)
     const targetName = children.length > 0 ? children[0]!.name : '__ungrouped__'
     const group = rootsByTarget.get(targetName) ?? []
@@ -490,7 +540,7 @@ export function createMapping(graph: AsciiGraph): void {
   // Multi-pass: iterate until all nodes are placed (handles non-topological node order)
   // Note: when shouldSeparate, externalRootNodes + subgraphRootNodes = rootNodes
   //       otherwise, externalRootNodes = rootNodes and subgraphRootNodes is empty
-  let placedCount = externalRootNodes.length + subgraphRootNodes.length
+  let placedCount = primaryRoots.length + subgraphRootNodes.length
   while (placedCount < graph.nodes.length) {
     const prevCount = placedCount
     for (const node of graph.nodes) {
@@ -508,7 +558,35 @@ export function createMapping(graph: AsciiGraph): void {
           ? parentSg.direction
           : graph.config.graphDirection
 
-        const childLevel = edgeDir === 'LR' ? gc.x + 4 : gc.y + 4
+        let childLevel = edgeDir === 'LR' ? gc.x + 4 : gc.y + 4
+
+        // Deferred root placement: when a cross-subgraph edge first enters
+        // a downstream subgraph, place that subgraph's deferred roots at the
+        // entry level. This ensures upstream subgraphs are rendered above
+        // downstream ones in TD mode (WS1 above WS3).
+        if (childSg && parentSg !== childSg && deferredRoots.size > 0) {
+          let placedDeferred = false
+          for (const dr of [...deferredRoots]) {
+            if (dr.gridCoord !== null) continue
+            const drSg = getNodeSubgraph(graph, dr)
+            if (drSg !== childSg) continue
+
+            const drPerp = highestPositionPerLevel[childLevel] ?? 0
+            const drRequested: GridCoord = edgeDir === 'LR'
+              ? { x: childLevel, y: drPerp }
+              : { x: drPerp, y: childLevel }
+            reserveSpotInGrid(graph, graph.nodes[dr.index]!, drRequested, edgeDir)
+            highestPositionPerLevel[childLevel] = drPerp + 4
+            deferredRoots.delete(dr)
+            placedCount++
+            placedDeferred = true
+          }
+          // Push the actual child one level deeper so it appears below the
+          // deferred roots (which are typically sources of intra-subgraph edges)
+          if (placedDeferred) {
+            childLevel += 4
+          }
+        }
 
         // Determine position based on direction context
         let highestPosition: number
@@ -524,6 +602,39 @@ export function createMapping(graph: AsciiGraph): void {
         } else {
           // Same direction: use level tracker
           highestPosition = highestPositionPerLevel[childLevel]!
+        }
+
+        // Subgraph containment: ensure node is placed in the spatial region
+        // of its own subgraph. Without this, cross-subgraph edges (e.g. A in WS1 → B in WS3)
+        // would place B at A's perpendicular position, causing WS3's bounding box
+        // to engulf WS1.
+        if (childSg) {
+          const existingSgNodes = childSg.nodes.filter(n => n !== child && n.gridCoord !== null)
+          if (existingSgNodes.length > 0) {
+            const perpPositions = existingSgNodes.map(n =>
+              graph.config.graphDirection === 'TD' ? n.gridCoord!.x : n.gridCoord!.y
+            )
+            const sgMinPerp = Math.min(...perpPositions)
+            highestPosition = Math.max(highestPosition, sgMinPerp)
+          } else if (parentSg && parentSg !== childSg) {
+            // First node in a different subgraph with no existing members.
+            // If childLevel falls within the parent subgraph's level range, the child
+            // would end up inside the parent's bounding box. Push it beyond the parent's
+            // max perpendicular extent to keep the subgraphs spatially separate.
+            const parentSgNodes = parentSg.nodes.filter(n => n.gridCoord !== null)
+            if (parentSgNodes.length > 0) {
+              const parentLevels = parentSgNodes.map(n =>
+                graph.config.graphDirection === 'TD' ? n.gridCoord!.y : n.gridCoord!.x
+              )
+              const parentMaxLevel = Math.max(...parentLevels) + 2 // +2 for node's 3-cell block
+              if (childLevel <= parentMaxLevel) {
+                const maxPerp = Math.max(...parentSgNodes.map(n =>
+                  graph.config.graphDirection === 'TD' ? n.gridCoord!.x : n.gridCoord!.y
+                ))
+                highestPosition = Math.max(highestPosition, maxPerp + 4)
+              }
+            }
+          }
         }
 
         const requested: GridCoord = edgeDir === 'LR'

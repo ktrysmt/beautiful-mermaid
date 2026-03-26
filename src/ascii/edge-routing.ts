@@ -8,6 +8,7 @@
 
 import type { GridCoord, Direction, AsciiEdge, AsciiGraph } from './types.ts'
 import { displayWidth } from './cjk.ts'
+import { maxLineWidth } from './multiline-utils.ts'
 import {
   Up, Down, Left, Right, UpperRight, UpperLeft, LowerRight, LowerLeft, Middle,
   gridCoordDirection,
@@ -228,7 +229,7 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
 export function determineLabelLine(graph: AsciiGraph, edge: AsciiEdge): void {
   if (edge.text.length === 0) return
 
-  const lenLabel = displayWidth(edge.text)
+  const lenLabel = maxLineWidth(edge.text)
   const pathLen = edge.path.length
   const isVerticalFlow = graph.config.graphDirection === 'TD'
 
