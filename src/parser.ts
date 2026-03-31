@@ -127,8 +127,8 @@ function parseFlowchart(lines: string[]): MermaidGraph {
     if (subgraphMatch) {
       const rest = subgraphMatch[1]!.trim()
       // Check for "subgraph id [Label]" form
-      // ID can contain hyphens (e.g. "us-east"), so use [\w-]+ not \w+
-      const bracketMatch = rest.match(/^([\w-]+)\s*\[(.+)\]$/)
+      // ID can contain hyphens (e.g. "us-east") and Unicode (e.g. CJK), so use [\w\p{L}-]+
+      const bracketMatch = rest.match(/^([\w\p{L}-]+)\s*\[(.+)\]$/u)
       let id: string
       let label: string
       if (bracketMatch) {
@@ -137,7 +137,7 @@ function parseFlowchart(lines: string[]): MermaidGraph {
       } else {
         // Use the label text as id (slugified)
         label = normalizeBrTags(rest)
-        id = rest.replace(/\s+/g, '_').replace(/[^\w]/g, '')
+        id = rest.replace(/\s+/g, '_').replace(/[^\p{L}\p{N}\w]/gu, '')
       }
       const sg: MermaidSubgraph = { id, label, nodeIds: [], children: [] }
       subgraphStack.push(sg)
