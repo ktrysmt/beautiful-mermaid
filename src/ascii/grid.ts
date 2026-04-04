@@ -12,7 +12,7 @@ import type {
 } from './types.ts'
 import { gridKey } from './types.ts'
 import { mkCanvas, setCanvasSizeToGrid, setRoleCanvasSizeToGrid } from './canvas.ts'
-import { determinePath, determineLabelLine } from './edge-routing.ts'
+import { determinePath, determineLabelLine, pathToCells } from './edge-routing.ts'
 import { analyzeEdgeBundles, processBundles } from './edge-bundling.ts'
 import { drawBox } from './draw.ts'
 import { maxLineWidth, lineCount } from './multiline-utils.ts'
@@ -558,7 +558,19 @@ export function createMapping(graph: AsciiGraph): void {
           ? parentSg.direction
           : graph.config.graphDirection
 
-        let childLevel = edgeDir === 'LR' ? gc.x + 4 : gc.y + 4
+        // Longest-path layer assignment: the child must be placed at least
+        // one level after ALL its already-placed predecessors, not just the
+        // current parent.  Without this, a fan-in node like C in "A→B, A→C,
+        // B→C" would be placed at the same level as B (because A places C
+        // first), making the B→C edge go backward/sideways.
+        let maxPredLevel = edgeDir === 'LR' ? gc.x : gc.y
+        for (const e of graph.edges) {
+          if (e.to.name === child.name && e.from.gridCoord !== null) {
+            const predLevel = edgeDir === 'LR' ? e.from.gridCoord.x : e.from.gridCoord.y
+            if (predLevel > maxPredLevel) maxPredLevel = predLevel
+          }
+        }
+        let childLevel = maxPredLevel + 4
 
         // Deferred root placement: when a cross-subgraph edge first enters
         // a downstream subgraph, place that subgraph's deferred roots at the
@@ -658,6 +670,27 @@ export function createMapping(graph: AsciiGraph): void {
     setColumnWidth(graph, node)
   }
 
+  // Fan-in space allocation: increase row height before nodes with many
+  // labeled incoming edges so that congestion-aware routing has room to
+  // spread edges across different grid lanes.
+  const labeledInDegree = new Map<string, number>()
+  for (const edge of graph.edges) {
+    if (edge.text.length > 0) {
+      labeledInDegree.set(edge.to.name, (labeledInDegree.get(edge.to.name) ?? 0) + 1)
+    }
+  }
+  for (const node of graph.nodes) {
+    const deg = labeledInDegree.get(node.name) ?? 0
+    if (deg >= 3 && node.gridCoord) {
+      const approachRow = node.gridCoord.y - 1
+      if (approachRow >= 0) {
+        const extra = Math.min((deg - 2) * 2, 10)
+        const current = graph.rowHeight.get(approachRow) ?? 0
+        graph.rowHeight.set(approachRow, Math.max(current, current + extra))
+      }
+    }
+  }
+
   // Analyze edges for bundling (parallel links like A & B --> C)
   // This groups edges that share sources or targets for cleaner visualization
   graph.bundles = analyzeEdgeBundles(graph)
@@ -665,18 +698,35 @@ export function createMapping(graph: AsciiGraph): void {
   // Route bundled edges through junction points
   processBundles(graph)
 
+  // Initialize label midpoint tracking and edge congestion map.
+  // Congestion tracks cells used by earlier edge paths so that A*
+  // encourages later edges to take alternative routes.
+  graph.usedLabelMidpoints = new Set<string>()
+  const congestion = new Map<string, number>()
+
   // Route non-bundled edges via A* and determine label positions
   for (const edge of graph.edges) {
     // Skip edges that were already routed as part of a bundle
     if (edge.bundle && edge.path.length > 0) {
       increaseGridSizeForPath(graph, edge.path)
       determineLabelLine(graph, edge)
+      // Record bundle path cells in congestion map
+      for (const cell of pathToCells(edge.path)) {
+        const k = gridKey(cell)
+        congestion.set(k, (congestion.get(k) ?? 0) + 1)
+      }
       continue
     }
 
-    determinePath(graph, edge)
+    determinePath(graph, edge, congestion)
     increaseGridSizeForPath(graph, edge.path)
     determineLabelLine(graph, edge)
+
+    // Record this edge's path cells in congestion map
+    for (const cell of pathToCells(edge.path)) {
+      const k = gridKey(cell)
+      congestion.set(k, (congestion.get(k) ?? 0) + 1)
+    }
   }
 
   // Convert grid coords → drawing coords and generate box drawings

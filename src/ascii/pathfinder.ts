@@ -124,11 +124,16 @@ const MAX_ITERATIONS = 50_000
 /**
  * Find a path from `from` to `to` on the grid using A*.
  * Returns the path as an array of GridCoords, or null if no path exists.
+ *
+ * When `congestion` is provided, cells already used by other edge paths
+ * incur an extra cost penalty, encouraging later edges to take different
+ * routes and reducing label overlap.
  */
 export function getPath(
   grid: Map<string, AsciiNode>,
   from: GridCoord,
   to: GridCoord,
+  congestion?: Map<string, number>,
 ): GridCoord[] | null {
   const pq = new MinHeap()
   pq.push({ coord: from, priority: 0 })
@@ -168,7 +173,9 @@ export function getPath(
         continue
       }
 
-      const newCost = currentCost + 1
+      // Base cost 1 + congestion penalty for cells used by other edges
+      const congestionPenalty = congestion?.get(gridKey(next)) ?? 0
+      const newCost = currentCost + 1 + congestionPenalty * 3
       const nextKey = gridKey(next)
       const existingCost = costSoFar.get(nextKey)
 

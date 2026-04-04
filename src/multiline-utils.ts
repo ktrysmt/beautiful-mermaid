@@ -14,16 +14,26 @@ import { LINE_HEIGHT_RATIO } from './text-metrics.ts'
  * but preserves formatting tags (<b>, <i>, <u>, <s>) for SVG rendering.
  */
 export function normalizeBrTags(label: string): string {
-  // Strip surrounding double quotes (Mermaid uses them for special chars in labels)
-  const unquoted = label.startsWith('"') && label.endsWith('"') ? label.slice(1, -1) : label
-  return unquoted
+  // Convert line-break markers and trim first, so surrounding quotes are
+  // exposed even when the raw label has leading/trailing <br> from multi-line
+  // source definitions (e.g. `[<br>"text"<br>]`).
+  let result = label
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/\\n/g, '\n')
+    .trim()
+
+  // Strip surrounding double quotes (Mermaid uses them for special chars in labels)
+  if (result.startsWith('"') && result.endsWith('"')) {
+    result = result.slice(1, -1)
+  }
+
+  return result
     .replace(/<\/?(?:sub|sup|small|mark)\s*>/gi, '')
     // Markdown formatting → HTML tags (order matters: ** before *)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(?<!\*)\*([^\s*](?:[^*]*[^\s*])?)\*(?!\*)/g, '<i>$1</i>')
     .replace(/~~(.+?)~~/g, '<s>$1</s>')
+    .trim()
 }
 
 /**

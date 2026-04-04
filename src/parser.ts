@@ -13,12 +13,77 @@ import { normalizeBrTags } from './multiline-utils.ts'
 // ============================================================================
 
 /**
+ * Join lines that belong to a multi-line node/label definition.
+ *
+ * Mermaid allows node labels to span multiple source lines when enclosed in
+ * brackets or quotes (e.g. `A["line1\nline2"]`).  The line-by-line parser
+ * splits on `\n` first, so a multi-line label like:
+ *
+ *     PQ["hello<br>world
+ *         more text
+ *         "]
+ *
+ * becomes three separate lines.  This function re-joins them using `<br>` so
+ * that `normalizeBrTags` later converts them to `\n` in the label text.
+ *
+ * Tracking: bracket depth (`[]`, `()`, `{}`) and unclosed double-quotes.
+ * Brackets inside quoted regions are ignored.
+ */
+function joinMultilineDefinitions(lines: string[]): string[] {
+  const result: string[] = []
+  let buffer = ''
+  let bracketDepth = 0
+  let parenDepth = 0
+  let inQuote = false
+
+  for (const line of lines) {
+    if (bracketDepth === 0 && parenDepth === 0 && !inQuote) {
+      // Start of a new (possibly multi-line) definition
+      buffer = line
+    } else {
+      // Continuation of an unclosed definition — avoid duplicate <br> when
+      // the previous fragment already ends with one.
+      if (/<br\s*\/?>\s*$/i.test(buffer)) {
+        buffer += line
+      } else {
+        buffer += '<br>' + line
+      }
+    }
+
+    // Track bracket/quote depth across this line.
+    // Only [] and () are tracked — {} are excluded because `state X {`
+    // in state diagrams uses braces as structural delimiters, not labels.
+    for (const ch of line) {
+      if (ch === '"') {
+        inQuote = !inQuote
+      } else if (!inQuote) {
+        if (ch === '[') bracketDepth++
+        else if (ch === ']') bracketDepth = Math.max(0, bracketDepth - 1)
+        else if (ch === '(') parenDepth++
+        else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1)
+      }
+    }
+
+    // Flush when all delimiters are closed
+    if (bracketDepth === 0 && parenDepth === 0 && !inQuote) {
+      result.push(buffer)
+      buffer = ''
+    }
+  }
+
+  // Flush any remaining buffer (unclosed delimiters — best-effort)
+  if (buffer) result.push(buffer)
+  return result
+}
+
+/**
  * Parse Mermaid text into a logical graph structure.
  * Auto-detects diagram type (flowchart or state diagram).
  * Throws on invalid/unsupported input.
  */
 export function parseMermaid(text: string): MermaidGraph {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('%%'))
+  const rawLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('%%'))
+  const lines = joinMultilineDefinitions(rawLines)
 
   if (lines.length === 0) {
     throw new Error('Empty mermaid diagram')

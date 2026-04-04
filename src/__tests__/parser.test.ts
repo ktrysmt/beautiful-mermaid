@@ -879,3 +879,90 @@ describe('parseMermaid – state diagrams', () => {
     expect(g.edges).toHaveLength(6)
   })
 })
+
+// ============================================================================
+// Multi-line label definitions (labels spanning multiple source lines)
+// ============================================================================
+
+describe('parseMermaid – multi-line label definitions', () => {
+  it('joins a label split across two source lines', () => {
+    const g = parseMermaid('graph TD\n  A["Hello\n  World"]')
+    expect(g.nodes.get('A')!.label).toBe('Hello\nWorld')
+  })
+
+  it('joins a label split across three source lines', () => {
+    const g = parseMermaid('graph TD\n  PQ["Line1<br>Line2\n  Line3\n  "]')
+    expect(g.nodes.get('PQ')!.label).toBe('Line1\nLine2\nLine3')
+  })
+
+  it('avoids duplicate <br> when source line ends with <br>', () => {
+    const g = parseMermaid('graph TD\n  A["Top<br>\n  Bottom"]')
+    expect(g.nodes.get('A')!.label).toBe('Top\nBottom')
+  })
+
+  it('handles label with only whitespace lines inside quotes', () => {
+    const g = parseMermaid('graph TD\n  XK["\n  Content\n  "]')
+    expect(g.nodes.get('XK')!.label).toBe('Content')
+  })
+
+  it('handles rounded shape with multi-line label', () => {
+    const g = parseMermaid('graph TD\n  A("Line1\n  Line2")')
+    expect(g.nodes.get('A')!.label).toBe('Line1\nLine2')
+    expect(g.nodes.get('A')!.shape).toBe('rounded')
+  })
+
+  it('handles cylinder shape with multi-line label', () => {
+    const g = parseMermaid('graph TD\n  A[("Line1\n  Line2")]')
+    expect(g.nodes.get('A')!.label).toBe('Line1\nLine2')
+    expect(g.nodes.get('A')!.shape).toBe('cylinder')
+  })
+
+  it('preserves edges when nodes have multi-line labels', () => {
+    const g = parseMermaid(`graph TD
+      A["Node\n  One"]
+      B["Node\n  Two"]
+      A --> B`)
+    expect(g.nodes.get('A')!.label).toBe('Node\nOne')
+    expect(g.nodes.get('B')!.label).toBe('Node\nTwo')
+    expect(g.edges).toHaveLength(1)
+    expect(g.edges[0]!.source).toBe('A')
+    expect(g.edges[0]!.target).toBe('B')
+  })
+
+  it('handles chained edges with multi-line labels', () => {
+    const g = parseMermaid(`graph TD
+      A["Multi\n  line1"] --> B["Multi\n  line2"]`)
+    expect(g.nodes.get('A')!.label).toBe('Multi\nline1')
+    expect(g.nodes.get('B')!.label).toBe('Multi\nline2')
+    expect(g.edges).toHaveLength(1)
+  })
+
+  it('handles subgraph with bracket label spanning multiple lines', () => {
+    const g = parseMermaid(`graph TD
+      subgraph sg1 [Multi
+      Line Label]
+        A[Node]
+      end`)
+    expect(g.subgraphs).toHaveLength(1)
+    expect(g.subgraphs[0]!.label).toBe('Multi\nLine Label')
+    expect(g.subgraphs[0]!.nodeIds).toContain('A')
+  })
+
+  it('handles complex3.md-like graph with multi-line labels', () => {
+    const g = parseMermaid(`graph TB
+      PQ["Label1<br>Label2
+        Label3
+        "]
+      XK["
+        Content
+        "]
+      subgraph Group
+        PQ
+        XK
+      end
+      PQ --> XK`)
+    expect(g.nodes.get('PQ')!.label).toBe('Label1\nLabel2\nLabel3')
+    expect(g.nodes.get('XK')!.label).toBe('Content')
+    expect(g.edges).toHaveLength(1)
+  })
+})

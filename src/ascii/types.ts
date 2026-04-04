@@ -161,6 +161,8 @@ export interface AsciiGraph {
   offsetY: number
   /** Edge bundles for parallel link visualization. Set during bundling analysis. */
   bundles: EdgeBundle[]
+  /** Tracks grid midpoints already occupied by edge labels to avoid overlap. */
+  usedLabelMidpoints?: Set<string>
 }
 
 // ============================================================================

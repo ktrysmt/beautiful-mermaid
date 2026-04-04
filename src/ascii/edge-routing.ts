@@ -154,7 +154,7 @@ export function determineStartAndEndDir(
  * Uses the effective direction for edge routing, respecting subgraph direction overrides
  * when both source and target are in the same subgraph.
  */
-export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
+export function determinePath(graph: AsciiGraph, edge: AsciiEdge, congestion?: Map<string, number>): void {
   // Determine effective direction for this edge
   // If both nodes are in the same subgraph with a direction override, use it
   // Otherwise, use the graph's direction (not source's effective direction)
@@ -170,12 +170,12 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
   // Try preferred path
   const prefFrom = gridCoordDirection(edge.from.gridCoord!, preferredDir)
   const prefTo = gridCoordDirection(edge.to.gridCoord!, preferredOppositeDir)
-  let preferredPath = getPath(graph.grid, prefFrom, prefTo)
+  let preferredPath = getPath(graph.grid, prefFrom, prefTo, congestion)
 
   // Try alternative path
   const altFrom = gridCoordDirection(edge.from.gridCoord!, alternativeDir)
   const altTo = gridCoordDirection(edge.to.gridCoord!, alternativeOppositeDir)
-  let alternativePath = getPath(graph.grid, altFrom, altTo)
+  let alternativePath = getPath(graph.grid, altFrom, altTo, congestion)
 
   // Case 1: Both paths found — pick the shorter one
   if (preferredPath !== null && alternativePath !== null) {
@@ -220,10 +220,57 @@ export function determinePath(graph: AsciiGraph, edge: AsciiEdge): void {
 }
 
 /**
+ * Expand a merged edge path into all grid cells it traverses.
+ * Used to build the congestion map after an edge is routed.
+ */
+export function pathToCells(path: GridCoord[]): GridCoord[] {
+  const cells: GridCoord[] = []
+  for (let i = 0; i < path.length - 1; i++) {
+    const p1 = path[i]!
+    const p2 = path[i + 1]!
+    if (p1.x === p2.x) {
+      const minY = Math.min(p1.y, p2.y)
+      const maxY = Math.max(p1.y, p2.y)
+      for (let y = minY; y <= maxY; y++) {
+        cells.push({ x: p1.x, y })
+      }
+    } else {
+      const minX = Math.min(p1.x, p2.x)
+      const maxX = Math.max(p1.x, p2.x)
+      for (let x = minX; x <= maxX; x++) {
+        cells.push({ x, y: p1.y })
+      }
+    }
+  }
+  return cells
+}
+
+/**
+ * Generate a unique key for a segment midpoint to track label placement.
+ * For vertical segments: "v:x:yMid", for horizontal: "h:y:xMid".
+ */
+function segmentMidpointKey(line: [GridCoord, GridCoord]): string {
+  const isVertical = line[0].x === line[1].x
+  if (isVertical) {
+    const mid = Math.floor((line[0].y + line[1].y) / 2)
+    return `v:${line[0].x}:${mid}`
+  } else {
+    const mid = Math.floor((line[0].x + line[1].x) / 2)
+    return `h:${line[0].y}:${mid}`
+  }
+}
+
+/**
  * Find the best line segment in an edge's path to place a label on.
- * Prefers vertical segments for TD/BT graphs and horizontal for LR/RL to avoid
- * label collisions when multiple edges share initial segments.
- * Falls back to the widest segment if none are suitable.
+ *
+ * Selection strategy (in priority order):
+ * 1. Prefer segments whose midpoint is not yet occupied by another label
+ * 2. Exclude the first segment (often shared by edges from the same source)
+ * 3. Among remaining candidates, prefer segments closer to the path middle
+ *    rather than the end — this distributes labels more evenly and avoids
+ *    clustering at shared fan-in / fan-out segments near the target or source
+ * 4. Falls back to the widest segment if none are suitable
+ *
  * Also increases the column width at the label position to fit the text.
  */
 export function determineLabelLine(graph: AsciiGraph, edge: AsciiEdge): void {
@@ -231,7 +278,6 @@ export function determineLabelLine(graph: AsciiGraph, edge: AsciiEdge): void {
 
   const lenLabel = maxLineWidth(edge.text)
   const pathLen = edge.path.length
-  const isVerticalFlow = graph.config.graphDirection === 'TD'
 
   // Collect all segments with their widths and orientation
   const segments: {
@@ -246,34 +292,39 @@ export function determineLabelLine(graph: AsciiGraph, edge: AsciiEdge): void {
     const p2 = edge.path[i]!
     const line: [GridCoord, GridCoord] = [p1, p2]
     const width = calculateLineWidth(graph, line)
-    // A segment is vertical if X coords are same, horizontal if Y coords are same
     const isVertical = p1.x === p2.x
     segments.push({ line, width, index: i, isVertical })
   }
 
-  // Find segments wide enough for the label, excluding the first segment
-  // The first segment is often shared between edges from the same source node
-  const suitableSegments = segments.filter(s => s.width >= lenLabel && s.index > 1)
+  const used = graph.usedLabelMidpoints ?? new Set<string>()
+  const middleIdx = Math.floor(pathLen / 2)
+
+  // Score: prefer unoccupied midpoints, exclude first segment, prefer middle
+  const scoreSeg = (s: typeof segments[0]) => {
+    const key = segmentMidpointKey(s.line)
+    let score = 0
+    if (!used.has(key)) score += 1000       // strongly prefer unoccupied
+    if (s.index > 1) score += 100           // avoid first segment
+    score -= Math.abs(s.index - middleIdx)  // prefer segments near middle
+    return score
+  }
+
+  // Find segments wide enough for the label
+  const candidates = segments.filter(s => s.width >= lenLabel)
 
   let largestLine: [GridCoord, GridCoord]
 
-  if (suitableSegments.length > 0) {
-    // Prefer segments near the end of the path (closer to target)
-    // This avoids the shared initial segments from source
-    suitableSegments.sort((a, b) => b.index - a.index)
-    largestLine = suitableSegments[0]!.line
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => scoreSeg(b) - scoreSeg(a))
+    largestLine = candidates[0]!.line
   } else {
-    // Fall back to any suitable segment including the first
-    const fallbackSegments = segments.filter(s => s.width >= lenLabel)
-    if (fallbackSegments.length > 0) {
-      fallbackSegments.sort((a, b) => b.index - a.index)
-      largestLine = fallbackSegments[0]!.line
-    } else {
-      // No segment wide enough — use the widest one
-      segments.sort((a, b) => b.width - a.width)
-      largestLine = segments[0]?.line ?? [edge.path[0]!, edge.path[1]!]
-    }
+    // No segment wide enough — use the widest one
+    segments.sort((a, b) => b.width - a.width)
+    largestLine = segments[0]?.line ?? [edge.path[0]!, edge.path[1]!]
   }
+
+  // Mark this segment's midpoint as occupied
+  used.add(segmentMidpointKey(largestLine))
 
   // Ensure column at midpoint is wide enough for the label
   const minX = Math.min(largestLine[0].x, largestLine[1].x)
