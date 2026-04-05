@@ -6,8 +6,6 @@
 
 Ultra-fast, fully themeable, zero DOM dependencies. Built for the AI era.
 
-![beautiful-mermaid sequence diagram example](hero.png)
-
 [![npm version](https://img.shields.io/npm/v/@ktrysmt/beautiful-mermaid.svg)](https://www.npmjs.com/package/@ktrysmt/beautiful-mermaid)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
