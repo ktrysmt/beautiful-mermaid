@@ -384,8 +384,13 @@ export function drawArrow(
   }
 
   const labelCanvas = drawArrowLabel(graph, edge)
-  const [pathCanvas, linesDrawn, lineDirs] = drawPath(graph, edge.path, edge.style)
-  const boxStartCanvas = drawBoxStart(graph, edge.path, linesDrawn[0]!, edge.from.shape)
+
+  // Compute end coordinate override to extend the edge line to the target node's border.
+  // Without this, widened routing columns create a gap between the edge end and the node.
+  const endCoordOverride = computeEndCoordOverride(graph, edge)
+
+  const [pathCanvas, linesDrawn, lineDirs] = drawPath(graph, edge.path, edge.style, undefined, endCoordOverride)
+  const boxStartCanvas = drawBoxStart(graph, edge.path, linesDrawn[0]!, edge.from)
 
   // Draw end arrowhead only if hasArrowEnd is true (default behavior)
   let arrowHeadEndCanvas: Canvas
@@ -428,6 +433,57 @@ export function drawArrow(
 }
 
 /**
+ * Compute the drawing coordinate at the target node's border for the last path point.
+ * Only adjusts the axis parallel to the edge entry direction, keeping the perpendicular
+ * axis at the grid-computed position. Returns undefined when no adjustment is needed
+ * (i.e., the grid coordinate already aligns with the border).
+ */
+function computeEndCoordOverride(
+  graph: AsciiGraph,
+  edge: AsciiEdge,
+): DrawingCoord | undefined {
+  if (edge.path.length < 2) return undefined
+
+  const lastPathCoord = edge.path[edge.path.length - 1]!
+  const prevPathCoord = edge.path[edge.path.length - 2]!
+  const dir = determineDirection(prevPathCoord, lastPathCoord)
+  const defaultDC = gridToDrawingCoord(graph, lastPathCoord)
+  const targetDC = edge.to.drawingCoord
+  const targetGC = edge.to.gridCoord
+  if (!targetDC || !targetGC) return undefined
+
+  // Compute target box dimensions
+  let boxW = 0
+  for (let i = 0; i < 2; i++) boxW += graph.columnWidth.get(targetGC.x + i) ?? 0
+  let boxH = 0
+  for (let i = 0; i < 2; i++) boxH += graph.rowHeight.get(targetGC.y + i) ?? 0
+
+  if (dirEquals(dir, Left)) {
+    // Entering from the right: align x to the right border
+    const borderX = targetDC.x + boxW
+    if (borderX === defaultDC.x) return undefined
+    return { x: borderX, y: defaultDC.y }
+  } else if (dirEquals(dir, Right)) {
+    // Entering from the left: align x to the left border
+    const borderX = targetDC.x
+    if (borderX === defaultDC.x) return undefined
+    return { x: borderX, y: defaultDC.y }
+  } else if (dirEquals(dir, Up)) {
+    // Entering from below: align y to the bottom border
+    const borderY = targetDC.y + boxH
+    if (borderY === defaultDC.y) return undefined
+    return { x: defaultDC.x, y: borderY }
+  } else if (dirEquals(dir, Down)) {
+    // Entering from above: align y to the top border
+    const borderY = targetDC.y
+    if (borderY === defaultDC.y) return undefined
+    return { x: defaultDC.x, y: borderY }
+  }
+
+  return undefined
+}
+
+/**
  * Reverse a direction (for bidirectional arrow start heads).
  */
 function reverseDirection(dir: Direction): Direction {
@@ -450,16 +506,23 @@ function drawPath(
   graph: AsciiGraph,
   path: GridCoord[],
   style: AsciiEdgeStyle = 'solid',
+  startCoordOverride?: DrawingCoord,
+  endCoordOverride?: DrawingCoord,
 ): [Canvas, DrawingCoord[][], Direction[]] {
   const canvas = copyCanvas(graph.canvas)
   let previousCoord = path[0]!
   const linesDrawn: DrawingCoord[][] = []
   const lineDirs: Direction[] = []
+  const lastIdx = path.length - 1
 
   for (let i = 1; i < path.length; i++) {
     const nextCoord = path[i]!
-    const prevDC = gridToDrawingCoord(graph, previousCoord)
-    const nextDC = gridToDrawingCoord(graph, nextCoord)
+    const prevDC = (i === 1 && startCoordOverride)
+      ? startCoordOverride
+      : gridToDrawingCoord(graph, previousCoord)
+    const nextDC = (i === lastIdx && endCoordOverride)
+      ? endCoordOverride
+      : gridToDrawingCoord(graph, nextCoord)
 
     if (drawingCoordEquals(prevDC, nextDC)) {
       previousCoord = nextCoord
@@ -478,7 +541,14 @@ function drawPath(
 }
 
 /**
- * Draw the junction character where an edge exits the source node's box.
+ * Draw the junction character where an edge exits the source node's box,
+ * and bridge any gap between the node border and the edge start.
+ *
+ * When routing columns/rows are widened (e.g. by edge labels), the edge
+ * start point (centered in the routing cell) can be far from the node border.
+ * This function places the junction character on the actual border and draws
+ * connecting line characters to bridge the gap.
+ *
  * Only applies to Unicode mode (ASCII mode just uses the line characters).
  * Skips drawing for state pseudo-states which have their own visual borders.
  */
@@ -486,23 +556,51 @@ function drawBoxStart(
   graph: AsciiGraph,
   path: GridCoord[],
   firstLine: DrawingCoord[],
-  sourceShape: string,
+  sourceNode: AsciiNode,
 ): Canvas {
   const canvas = copyCanvas(graph.canvas)
   if (graph.config.useAscii) return canvas
 
   // Skip box start connectors for state pseudo-states (they have their own bordered design)
-  if (sourceShape === 'state-start' || sourceShape === 'state-end') {
+  if (sourceNode.shape === 'state-start' || sourceNode.shape === 'state-end') {
     return canvas
   }
 
   const from = firstLine[0]!
   const dir = determineDirection(path[0]!, path[1]!)
+  const dc = sourceNode.drawingCoord!
+  const gc = sourceNode.gridCoord!
 
-  if (dirEquals(dir, Up)) canvas[from.x]![from.y + 1] = '┴'
-  else if (dirEquals(dir, Down)) canvas[from.x]![from.y - 1] = '┬'
-  else if (dirEquals(dir, Left)) canvas[from.x + 1]![from.y] = '┤'
-  else if (dirEquals(dir, Right)) canvas[from.x - 1]![from.y] = '├'
+  if (dirEquals(dir, Right)) {
+    // Node border is at drawingCoord.x + (col0 + col1)
+    let boxW = 0
+    for (let i = 0; i < 2; i++) boxW += graph.columnWidth.get(gc.x + i) ?? 0
+    const borderX = dc.x + boxW
+    canvas[borderX]![from.y] = '├'
+    for (let x = borderX + 1; x < from.x; x++) {
+      canvas[x]![from.y] = '─'
+    }
+  } else if (dirEquals(dir, Left)) {
+    const borderX = dc.x
+    canvas[borderX]![from.y] = '┤'
+    for (let x = from.x + 1; x < borderX; x++) {
+      canvas[x]![from.y] = '─'
+    }
+  } else if (dirEquals(dir, Down)) {
+    let boxH = 0
+    for (let i = 0; i < 2; i++) boxH += graph.rowHeight.get(gc.y + i) ?? 0
+    const borderY = dc.y + boxH
+    canvas[from.x]![borderY] = '┬'
+    for (let y = borderY + 1; y < from.y; y++) {
+      canvas[from.x]![y] = '│'
+    }
+  } else if (dirEquals(dir, Up)) {
+    const borderY = dc.y
+    canvas[from.x]![borderY] = '┴'
+    for (let y = from.y + 1; y < borderY; y++) {
+      canvas[from.x]![y] = '│'
+    }
+  }
 
   return canvas
 }
