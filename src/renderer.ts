@@ -197,7 +197,6 @@ function renderGroup(group: PositionedGroup, font: string): string {
 function renderEdge(edge: PositionedEdge): string {
   if (edge.points.length < 2) return ''
 
-  const pathData = pointsToPolylinePath(edge.points)
   const dashArray = edge.style === 'dotted' ? ' stroke-dasharray="4 4"' : ''
   const baseStrokeWidth = edge.style === 'thick' ? STROKE_WIDTHS.connector * 2 : STROKE_WIDTHS.connector
   const strokeColor = escapeAttr(edge.inlineStyle?.stroke ?? 'var(--_line)')
@@ -229,14 +228,67 @@ function renderEdge(edge: PositionedEdge): string {
   }
 
   return (
-    `<polyline ${dataAttrs.join(' ')} points="${pathData}" fill="none" stroke="${strokeColor}" ` +
+    `<path ${dataAttrs.join(' ')} d="${pointsToRoundedPath(edge.points)}" fill="none" stroke="${strokeColor}" ` +
     `stroke-width="${strokeWidth}"${dashArray}${markers} />`
   )
 }
 
-/** Convert points to SVG polyline points attribute: "x1,y1 x2,y2 ..." */
-function pointsToPolylinePath(points: Point[]): string {
-  return points.map(p => `${p.x},${p.y}`).join(' ')
+/**
+ * Convert orthogonal points to an SVG path with rounded corners.
+ *
+ * At each bend point, a quadratic Bezier curve (Q) replaces the sharp corner.
+ * The radius is clamped to half the shorter adjacent segment so curves never
+ * overshoot short segments.
+ */
+function pointsToRoundedPath(points: Point[], radius: number = 6): string {
+  if (points.length < 2) return ''
+  if (points.length === 2 || radius <= 0) {
+    return `M${points[0]!.x},${points[0]!.y}` +
+      points.slice(1).map(p => `L${p.x},${p.y}`).join('')
+  }
+
+  const parts: string[] = [`M${points[0]!.x},${points[0]!.y}`]
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1]!
+    const curr = points[i]!
+    const next = points[i + 1]!
+
+    // Lengths of the two segments meeting at this bend
+    const lenIn = Math.abs(curr.x - prev.x) + Math.abs(curr.y - prev.y)
+    const lenOut = Math.abs(next.x - curr.x) + Math.abs(next.y - curr.y)
+
+    // Clamp radius so it doesn't exceed half of either segment
+    const r = Math.min(radius, lenIn / 2, lenOut / 2)
+
+    if (r < 1) {
+      // Too short for a curve — straight line
+      parts.push(`L${curr.x},${curr.y}`)
+      continue
+    }
+
+    // Point where the curve starts (r before the bend)
+    const dx1 = curr.x - prev.x
+    const dy1 = curr.y - prev.y
+    const d1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1
+    const startX = curr.x - (dx1 / d1) * r
+    const startY = curr.y - (dy1 / d1) * r
+
+    // Point where the curve ends (r after the bend)
+    const dx2 = next.x - curr.x
+    const dy2 = next.y - curr.y
+    const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1
+    const endX = curr.x + (dx2 / d2) * r
+    const endY = curr.y + (dy2 / d2) * r
+
+    parts.push(`L${startX},${startY}`)
+    parts.push(`Q${curr.x},${curr.y} ${endX},${endY}`)
+  }
+
+  const last = points[points.length - 1]!
+  parts.push(`L${last.x},${last.y}`)
+
+  return parts.join('')
 }
 
 function renderEdgeLabel(edge: PositionedEdge, font: string): string {

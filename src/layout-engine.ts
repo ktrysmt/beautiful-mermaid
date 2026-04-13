@@ -209,6 +209,7 @@ function mermaidToElk(
       'elk.layered.highDegreeNodes.threshold': '8',
       'elk.layered.compaction.postCompaction.strategy': 'LEFT_RIGHT_CONSTRAINT_LOCKING',
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.cycleBreaking.strategy': 'DEPTH_FIRST',
       'elk.layered.wrapping.strategy': 'OFF',
       // Use SEPARATE when subgraphs have direction overrides (enables proper direction handling)
       // Use INCLUDE_CHILDREN otherwise (simpler cross-hierarchy edge routing)
@@ -353,6 +354,7 @@ function subgraphToElk(
     'elk.layered.spacing.edgeEdgeBetweenLayers': '12',
     'elk.layered.spacing.edgeNodeBetweenLayers': '12',
     'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+    'elk.layered.cycleBreaking.strategy': 'DEPTH_FIRST',
     'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.layerSpacing),
     'elk.spacing.nodeNode': String(opts.nodeSpacing),
   }
@@ -513,6 +515,10 @@ function elkToPositioned(
   // Extract nodes and groups recursively
   extractNodesAndGroups(elkResult, graph, subgraphIds, nodes, groups, 0, 0)
 
+  // Expand group widths when the header label is wider than the box.
+  // ELK ignores nodeSize.minimum for compound nodes, so we fix it here.
+  expandGroupsForLabels(groups, nodes)
+
   // Compute margin positions for cross-hierarchy edge routing.
   // Margins sit outside all group bounding boxes so edges don't cross through subgraphs.
   const allBounds = flattenGroupBounds(groups)
@@ -538,6 +544,10 @@ function elkToPositioned(
   if (mergeEdges) {
     bundleEdgePaths(edges, nodes, groups, graph.direction)
   }
+
+  // Reroute back-edges (upward in TD) so they exit/enter from the side of nodes
+  // instead of top/bottom. This matches the convention used by dagre/Mermaid.js.
+  rerouteBackEdges(edges, nodes, groups, graph.direction)
 
   // Apply shape-aware edge clipping for non-rectangular shapes.
   // ELK treats all nodes as rectangles, so we need to clip edge endpoints
@@ -579,6 +589,56 @@ function elkToPositioned(
     nodes,
     edges,
     groups,
+  }
+}
+
+/**
+ * Expand group widths so the header label never overflows.
+ * ELK's compound node sizing ignores labels, so we post-correct here.
+ * Child nodes within expanded groups are shifted to stay centered.
+ */
+function expandGroupsForLabels(groups: PositionedGroup[], nodes: PositionedNode[]): void {
+  for (const group of groups) {
+    // Recurse into nested groups first
+    if (group.children.length > 0) {
+      expandGroupsForLabels(group.children, nodes)
+    }
+
+    if (!group.label) continue
+
+    const metrics = measureMultilineText(group.label, FONT_SIZES.groupHeader, FONT_WEIGHTS.groupHeader)
+    const needed = metrics.width + 12 + 16  // 12px left text padding + 16px right padding
+    if (needed <= group.width) continue
+
+    const extra = needed - group.width
+    const shift = extra / 2
+
+    // Shift all nodes that fall within this group's bounding box
+    for (const node of nodes) {
+      if (
+        node.x >= group.x &&
+        node.x + node.width <= group.x + group.width + extra &&
+        node.y >= group.y &&
+        node.y + node.height <= group.y + group.height
+      ) {
+        node.x += shift
+      }
+    }
+
+    // Shift nested child groups too
+    for (const child of group.children) {
+      shiftGroupX(child, shift)
+    }
+
+    group.width = needed
+  }
+}
+
+/** Recursively shift a group and all its children by dx. */
+function shiftGroupX(group: PositionedGroup, dx: number): void {
+  group.x += dx
+  for (const child of group.children) {
+    shiftGroupX(child, dx)
   }
 }
 
@@ -854,6 +914,163 @@ function orthogonalizeEdgePoints(
   }
 
   return result
+}
+
+/**
+ * Reroute back-edges so they exit from the side of the source node and enter
+ * from the side of the target node, then travel along the diagram margin.
+ *
+ * In a top-down layout, ELK routes back-edges (upward) from the bottom of the
+ * source to the top of the target. This produces confusing visuals because the
+ * edge direction opposes the flow. Moving endpoints to the sides and routing
+ * through margins (outside all subgraphs) makes the feedback loop obvious.
+ *
+ * When multiple back-edges share a source or target node, exit/entry Y positions
+ * are spread evenly across the node's right side to prevent overlap.
+ */
+function rerouteBackEdges(
+  edges: PositionedEdge[],
+  nodes: PositionedNode[],
+  groups: PositionedGroup[],
+  direction: Direction
+): void {
+  const isVertical = direction === 'TD' || direction === 'TB' || direction === 'BT'
+  if (!isVertical) return
+
+  const isDownward = direction === 'TD' || direction === 'TB'
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+
+  // Identify back-edges
+  const backEdgeIndices: number[] = []
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i]!
+    const src = nodeMap.get(edge.source)
+    const tgt = nodeMap.get(edge.target)
+    if (!src || !tgt || edge.points.length < 2) continue
+
+    const isBackEdge = isDownward
+      ? src.y > tgt.y
+      : src.y + src.height < tgt.y + tgt.height
+
+    if (isBackEdge) backEdgeIndices.push(i)
+  }
+
+  if (backEdgeIndices.length === 0) return
+
+  // Count total back-edge ports per node (exits + entries combined) so that
+  // all ports on a node's right side are distributed without overlap.
+  // Exits are placed in the upper portion, entries in the lower portion.
+  const nodeExitCount = new Map<string, number>()
+  const nodeEnterCount = new Map<string, number>()
+  for (const idx of backEdgeIndices) {
+    const edge = edges[idx]!
+    nodeExitCount.set(edge.source, (nodeExitCount.get(edge.source) ?? 0) + 1)
+    nodeEnterCount.set(edge.target, (nodeEnterCount.get(edge.target) ?? 0) + 1)
+  }
+
+  // Total ports on each node's right side (exits + entries)
+  const nodeTotalPorts = new Map<string, number>()
+  const allNodeIds = new Set([...nodeExitCount.keys(), ...nodeEnterCount.keys()])
+  for (const id of allNodeIds) {
+    nodeTotalPorts.set(id, (nodeExitCount.get(id) ?? 0) + (nodeEnterCount.get(id) ?? 0))
+  }
+
+  // Track per-node port allocation. Exits are assigned first (top slots),
+  // entries second (bottom slots) so they never share the same Y position.
+  const nodeNextExitSlot = new Map<string, number>()
+  const nodeNextEnterSlot = new Map<string, number>()
+
+  // Compute diagram margin
+  const allBounds = flattenGroupBounds(groups)
+  for (const n of nodes) {
+    allBounds.push({ x: n.x, y: n.y, right: n.x + n.width, bottom: n.y + n.height })
+  }
+  const diagramRight = Math.max(...allBounds.map(b => b.right))
+
+  const EDGE_SPACING = 12
+  const PORT_MARGIN = 6  // inset from node top/bottom edges
+
+  /** Compute Y position for a port slot on a node's right side */
+  function portY(node: PositionedNode, slotIndex: number, totalSlots: number): number {
+    if (totalSlots === 1) return node.y + node.height / 2
+    const usable = node.height - PORT_MARGIN * 2
+    return node.y + PORT_MARGIN + (usable * (slotIndex + 0.5)) / totalSlots
+  }
+
+  for (let bi = 0; bi < backEdgeIndices.length; bi++) {
+    const edge = edges[backEdgeIndices[bi]!]!
+    const src = nodeMap.get(edge.source)!
+    const tgt = nodeMap.get(edge.target)!
+
+    // Exit slot: exits occupy the first N slots (upper portion)
+    const srcExitIdx = nodeNextExitSlot.get(edge.source) ?? 0
+    nodeNextExitSlot.set(edge.source, srcExitIdx + 1)
+    const srcExitY = portY(src, srcExitIdx, nodeTotalPorts.get(edge.source)!)
+
+    // Enter slot: entries occupy slots after all exits (lower portion)
+    const tgtEnterIdx = nodeNextEnterSlot.get(edge.target) ?? 0
+    nodeNextEnterSlot.set(edge.target, tgtEnterIdx + 1)
+    const tgtExitOffset = nodeExitCount.get(edge.target) ?? 0
+    const tgtEntryY = portY(tgt, tgtExitOffset + tgtEnterIdx, nodeTotalPorts.get(edge.target)!)
+
+    const srcRight = src.x + src.width
+    const tgtRight = tgt.x + tgt.width
+
+    // Each back-edge gets its own margin column
+    const marginX = diagramRight + 20 + bi * EDGE_SPACING
+
+    edge.points = [
+      { x: srcRight, y: srcExitY },
+      { x: marginX, y: srcExitY },
+      { x: marginX, y: tgtEntryY },
+      { x: tgtRight, y: tgtEntryY },
+    ]
+  }
+
+  // Resolve label positions for back-edges, avoiding overlaps.
+  // Labels are centered ON the vertical margin segment (same convention as
+  // forward-edge labels which sit on the line). Only shifted when overlapping.
+  const LABEL_PADDING = 8
+  const placedLabels: Array<{ x: number; y: number; hw: number; hh: number }> = []
+
+  for (const idx of backEdgeIndices) {
+    const edge = edges[idx]!
+    if (!edge.label) continue
+
+    const metrics = measureMultilineText(edge.label, FONT_SIZES.edgeLabel, FONT_WEIGHTS.edgeLabel)
+    const halfW = (metrics.width + LABEL_PADDING * 2) / 2
+    const halfH = (metrics.height + LABEL_PADDING * 2) / 2
+
+    // Margin vertical segment: points[1] to points[2]
+    const marginX = edge.points[1]!.x
+    const topY = Math.min(edge.points[1]!.y, edge.points[2]!.y)
+    const botY = Math.max(edge.points[1]!.y, edge.points[2]!.y)
+
+    // Place label centered on the margin line (like forward edges)
+    let labelX = marginX
+    let labelY = (topY + botY) / 2
+
+    // Push label down if it overlaps a previously placed label
+    for (let attempt = 0; attempt < placedLabels.length + 1; attempt++) {
+      let overlap = false
+      for (const prev of placedLabels) {
+        const overlapX = Math.abs(labelX - prev.x) < (halfW + prev.hw)
+        const overlapY = Math.abs(labelY - prev.y) < (halfH + prev.hh)
+        if (overlapX && overlapY) {
+          labelY = prev.y + prev.hh + halfH + 2
+          overlap = true
+          break
+        }
+      }
+      if (!overlap) break
+    }
+
+    // Clamp within the vertical segment range
+    labelY = Math.max(topY + halfH, Math.min(botY - halfH, labelY))
+
+    edge.labelPosition = { x: labelX, y: labelY }
+    placedLabels.push({ x: labelX, y: labelY, hw: halfW, hh: halfH })
+  }
 }
 
 /**
@@ -1396,8 +1613,175 @@ function bundleEdgePaths(
 // ============================================================================
 
 /**
+ * Build a flat ELK graph (no compound nodes) from a compound ELK graph.
+ * Used for the first pass of two-pass layout to determine ideal layer assignments.
+ */
+function buildFlatElkGraph(compoundElk: ElkGraphNode): ElkGraphNode {
+  const flatNodes: ElkGraphNode[] = []
+  const flatEdges: ElkExtendedEdge[] = []
+
+  function collectNodes(node: ElkGraphNode): void {
+    if (!node.children) return
+    for (const child of node.children) {
+      // Compound nodes have a children array (possibly empty for empty subgraphs).
+      // Only recurse into non-empty compound nodes; skip empty ones entirely.
+      if (child.children) {
+        if (child.children.length > 0) collectNodes(child as ElkGraphNode)
+      } else {
+        flatNodes.push({ id: child.id, width: child.width, height: child.height, labels: child.labels })
+      }
+    }
+  }
+
+  collectNodes(compoundElk)
+
+  // Build set of known flat node IDs to filter edges
+  const flatNodeIds = new Set(flatNodes.map(n => n.id))
+
+  function collectEdges(node: ElkGraphNode): void {
+    if (node.edges) {
+      for (const e of node.edges) {
+        if (e.id.endsWith('_internal')) continue
+        // Skip edges referencing nodes not in the flat graph (e.g. subgraph IDs as targets)
+        const src = e.sources[0]
+        const tgt = e.targets[0]
+        if (src && tgt && flatNodeIds.has(src) && flatNodeIds.has(tgt)) {
+          flatEdges.push({ id: e.id, sources: [...e.sources], targets: [...e.targets] })
+        }
+      }
+    }
+    if (node.children) {
+      for (const child of node.children) collectEdges(child as ElkGraphNode)
+    }
+  }
+
+  collectEdges(compoundElk)
+
+  return {
+    id: 'flat_root',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': compoundElk.layoutOptions?.['elk.direction'] ?? 'DOWN',
+      'elk.spacing.nodeNode': compoundElk.layoutOptions?.['elk.spacing.nodeNode'] ?? '28',
+      'elk.layered.spacing.nodeNodeBetweenLayers': compoundElk.layoutOptions?.['elk.layered.spacing.nodeNodeBetweenLayers'] ?? '48',
+      'elk.spacing.edgeEdge': '12',
+      'elk.edgeRouting': 'ORTHOGONAL',
+      'elk.layered.cycleBreaking.strategy': 'DEPTH_FIRST',
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.padding': compoundElk.layoutOptions?.['elk.padding'] ?? '[top=40,left=40,bottom=40,right=40]',
+    },
+    children: flatNodes,
+    edges: flatEdges,
+  }
+}
+
+/**
+ * Determine layer assignments from a flat ELK layout result.
+ * Groups nodes by Y-axis proximity into layers.
+ */
+function extractFlatLayers(
+  flatResult: ElkNode,
+  layerSpacing: number,
+  direction: Direction
+): Map<string, number> {
+  const isHorizontal = direction === 'LR' || direction === 'RL'
+  const positions = new Map<string, number>()
+  for (const child of flatResult.children ?? []) {
+    positions.set(child.id, isHorizontal ? (child.x ?? 0) : (child.y ?? 0))
+  }
+
+  const sorted = [...positions.entries()].sort((a, b) => a[1] - b[1])
+  if (sorted.length === 0) return new Map()
+
+  const nodeLayer = new Map<string, number>()
+  const threshold = layerSpacing * 0.6
+  let layerIdx = 0
+  let prevPos = sorted[0]![1]
+  nodeLayer.set(sorted[0]![0], 0)
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i]![1] - prevPos > threshold) layerIdx++
+    nodeLayer.set(sorted[i]![0], layerIdx)
+    prevPos = sorted[i]![1]
+  }
+
+  return nodeLayer
+}
+
+/**
+ * Add layer-ordering constraint edges inside subgraphs.
+ *
+ * When the flat layout places subgraph members in non-adjacent layers (i.e.,
+ * another subgraph's nodes fall between them), ELK's compound node handling
+ * tends to compress them into the same layer. Adding explicit ordering edges
+ * inside the subgraph forces ELK to keep them separated.
+ *
+ * These edges use non-numeric IDs (e.g. "lc_Parent_0") so the edge extractor
+ * silently skips them — they never appear in the rendered SVG.
+ */
+function addLayerConstraintEdges(
+  elkGraph: ElkGraphNode,
+  nodeLayer: Map<string, number>,
+  subgraphs: MermaidSubgraph[]
+): void {
+  // Build subgraph ID → ELK compound node lookup
+  const sgNodeMap = new Map<string, ElkGraphNode>()
+  function findSgNodes(node: ElkGraphNode): void {
+    if (!node.children) return
+    for (const child of node.children) {
+      if (child.children && child.children.length > 0) {
+        sgNodeMap.set(child.id, child as ElkGraphNode)
+        findSgNodes(child as ElkGraphNode)
+      }
+    }
+  }
+  findSgNodes(elkGraph)
+
+  for (const sg of subgraphs) {
+    const elkSg = sgNodeMap.get(sg.id)
+    if (!elkSg || !elkSg.edges) continue
+
+    // Get members sorted by flat layer
+    const members = sg.nodeIds
+      .filter(id => nodeLayer.has(id))
+      .sort((a, b) => nodeLayer.get(a)! - nodeLayer.get(b)!)
+
+    if (members.length < 2) continue
+
+    // Check if members are in different layers
+    const firstLayer = nodeLayer.get(members[0]!)!
+    const lastLayer = nodeLayer.get(members[members.length - 1]!)!
+    if (firstLayer === lastLayer) continue
+
+    // Add constraint edges between consecutive members (in layer order)
+    for (let i = 0; i < members.length - 1; i++) {
+      const srcLayer = nodeLayer.get(members[i]!)!
+      const tgtLayer = nodeLayer.get(members[i + 1]!)!
+      if (srcLayer < tgtLayer) {
+        elkSg.edges.push({
+          id: `lc_${sg.id}_${i}`,
+          sources: [members[i]!],
+          targets: [members[i + 1]!],
+        })
+      }
+    }
+
+    // Recurse into nested subgraphs
+    if (sg.children.length > 0) {
+      addLayerConstraintEdges(elkGraph, nodeLayer, sg.children)
+    }
+  }
+}
+
+/**
  * Lay out a parsed MermaidGraph using ELK.js (synchronous).
  * Returns a fully positioned graph ready for rendering.
+ *
+ * Uses a two-pass strategy when subgraphs are present:
+ *   Pass 1 — flat layout (no compound nodes) with DEPTH_FIRST cycle breaking
+ *            to determine ideal layer assignments.
+ *   Pass 2 — compound layout with constraint edges injected inside subgraphs
+ *            to prevent ELK from compressing nodes into the same layer.
  */
 export function layoutGraphSync(
   graph: MermaidGraph,
@@ -1405,6 +1789,18 @@ export function layoutGraphSync(
 ): PositionedGraph {
   const opts = { ...DEFAULTS, ...options }
   const elkGraph = mermaidToElk(graph, opts)
+
+  // Two-pass layout: use flat layout to guide compound layout.
+  // Only applies when there are subgraphs with at least 2 leaf nodes to lay out.
+  if (graph.subgraphs.length > 0) {
+    const flatElk = buildFlatElkGraph(elkGraph)
+    if ((flatElk.children?.length ?? 0) >= 2 && (flatElk.edges?.length ?? 0) > 0) {
+      const flatResult = elkLayoutSync(flatElk)
+      const nodeLayer = extractFlatLayers(flatResult, opts.layerSpacing, graph.direction)
+      addLayerConstraintEdges(elkGraph, nodeLayer, graph.subgraphs)
+    }
+  }
+
   const result = elkLayoutSync(elkGraph)
   return elkToPositioned(result, graph, DEFAULTS.mergeEdges)
 }

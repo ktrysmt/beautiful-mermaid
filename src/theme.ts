@@ -64,8 +64,8 @@ export const DEFAULTS: Readonly<{ bg: string; fg: string }> = {
 export const MIX = {
   /** Primary text: near-full fg */
   text:         100, // just use --fg directly
-  /** Secondary text (group headers): fg mixed at 60% */
-  textSec:      60,
+  /** Secondary text (group headers, edge labels): fg mixed at 75% */
+  textSec:      75,
   /** Muted text (edge labels, notes): fg mixed at 40% */
   textMuted:    40,
   /** Faint text (de-emphasized): fg mixed at 25% */
@@ -248,7 +248,7 @@ export function buildStyleBlock(font: string, hasMonoFont: boolean): string {
   const derivedVars = `
     /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
     --_text:          var(--fg);
-    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) ${MIX.textSec}%, var(--bg)));
+    --_text-sec:      color-mix(in srgb, var(--fg) ${MIX.textSec}%, var(--bg));
     --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) ${MIX.textMuted}%, var(--bg)));
     --_text-faint:    color-mix(in srgb, var(--fg) ${MIX.textFaint}%, var(--bg));
     --_line:          var(--line, color-mix(in srgb, var(--fg) ${MIX.line}%, var(--bg)));
