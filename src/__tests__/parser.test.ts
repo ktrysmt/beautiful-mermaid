@@ -626,6 +626,43 @@ describe('parseMermaid – subgraphs', () => {
     expect(data.nodeIds).toContain('I')
     expect(data.nodeIds).toContain('J')
   })
+
+  it('redirects edges that target a subgraph ID to a node inside the subgraph', () => {
+    const g = parseMermaid(`graph TD
+      CISO[CISO]
+      subgraph L1 [Layer 1]
+        OP[Op]
+      end
+      subgraph L2 [Layer 2]
+        RM[Risk]
+      end
+      CISO --> L1
+      L2 -->|monitor| L1`)
+
+    // Phantom L1 / L2 rectangles must not appear among nodes
+    expect(g.nodes.has('L1')).toBe(false)
+    expect(g.nodes.has('L2')).toBe(false)
+
+    // Edges should be rewritten to representative inner nodes
+    expect(g.edges).toEqual([
+      expect.objectContaining({ source: 'CISO', target: 'OP' }),
+      expect.objectContaining({ source: 'RM', target: 'OP', label: 'monitor' }),
+    ])
+  })
+
+  it('resolves subgraph edge endpoints across nested subgraphs', () => {
+    const g = parseMermaid(`graph TD
+      X[X]
+      subgraph Outer
+        subgraph Inner
+          A[A]
+        end
+      end
+      X --> Outer`)
+
+    expect(g.nodes.has('Outer')).toBe(false)
+    expect(g.edges[0]!.target).toBe('A')
+  })
 })
 
 // ============================================================================

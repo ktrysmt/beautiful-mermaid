@@ -226,7 +226,69 @@ function parseFlowchart(lines: string[]): MermaidGraph {
     parseEdgeLine(line, graph, subgraphStack)
   }
 
+  resolveSubgraphEdgeEndpoints(graph)
+
   return graph
+}
+
+/**
+ * Mermaid lets edges reference a subgraph by its ID — e.g.
+ *   subgraph L1 [...]; X[...]; end
+ *   A --> L1
+ * means "draw an arrow from A to the L1 subgraph border."
+ *
+ * The line-by-line parser doesn't know `L1` is a subgraph when it processes
+ * `A --> L1` (subgraph IDs aren't entered into `graph.nodes`), so it falls
+ * back to creating a phantom rectangle node named `L1`. That phantom then
+ * renders as an unrelated box outside the subgraph.
+ *
+ * This pass runs after parsing completes: it picks a representative node
+ * inside each subgraph (first defined node, recursing into nested subgraphs
+ * if empty), redirects edges that reference subgraph IDs to that
+ * representative, and removes the phantom nodes. The result approximates
+ * Mermaid Live's "edge to subgraph border" semantics — the arrow now crosses
+ * the subgraph boundary on its way to a real inner node.
+ */
+function resolveSubgraphEdgeEndpoints(graph: MermaidGraph): void {
+  const representatives = new Map<string, string>()
+
+  function pickRepresentative(sg: MermaidSubgraph): string | undefined {
+    for (const id of sg.nodeIds) {
+      if (graph.nodes.has(id)) return id
+    }
+    for (const child of sg.children) {
+      const childRep = representatives.get(child.id) ?? pickRepresentative(child)
+      if (childRep) return childRep
+    }
+    return undefined
+  }
+
+  function visit(sg: MermaidSubgraph): void {
+    for (const child of sg.children) visit(child)
+    const rep = pickRepresentative(sg)
+    if (rep) representatives.set(sg.id, rep)
+  }
+  for (const sg of graph.subgraphs) visit(sg)
+
+  if (representatives.size === 0) return
+
+  for (const edge of graph.edges) {
+    const newSource = representatives.get(edge.source)
+    if (newSource) edge.source = newSource
+    const newTarget = representatives.get(edge.target)
+    if (newTarget) edge.target = newTarget
+  }
+
+  // Drop phantom nodes that were created from bare references to subgraph IDs,
+  // and scrub them from any subgraph membership lists they were tracked into.
+  for (const sgId of representatives.keys()) {
+    graph.nodes.delete(sgId)
+  }
+  function scrubMembership(sg: MermaidSubgraph): void {
+    sg.nodeIds = sg.nodeIds.filter(id => !representatives.has(id))
+    for (const child of sg.children) scrubMembership(child)
+  }
+  for (const sg of graph.subgraphs) scrubMembership(sg)
 }
 
 // ============================================================================
